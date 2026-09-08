@@ -1,0 +1,42 @@
+{
+  "random_forest": {
+    "path": "C:\\Users\\chinni krishna\\Downloads\\archive\\output\\random_forest.joblib",
+    "accuracy": 0.7857142857142857
+  },
+  "extra_trees": {
+    "path": "C:\\Users\\chinni krishna\\Downloads\\archive\\output\\extra_trees.joblib",
+    "accuracy": 0.8571428571428571
+  },
+  "gradient_boosting": {
+    "path": "C:\\Users\\chinni krishna\\Downloads\\archive\\output\\gradient_boosting.joblib",
+    "accuracy": 0.8571428571428571
+  },
+  "adaboost": {
+    "path": "C:\\Users\\chinni krishna\\Downloads\\archive\\output\\adaboost.joblib",
+    "accuracy": 0.8571428571428571
+  },
+  "bagging": {
+    "path": "C:\\Users\\chinni krishna\\Downloads\\archive\\output\\bagging.joblib",
+    "accuracy": 0.8571428571428571
+  },
+  "decision_tree": {
+    "path": "C:\\Users\\chinni krishna\\Downloads\\archive\\output\\decision_tree.joblib",
+    "accuracy": 0.7857142857142857
+  },
+  "knn": {
+    "path": "C:\\Users\\chinni krishna\\Downloads\\archive\\output\\knn.joblib",
+    "accuracy": 0.8571428571428571
+  },
+  "svc": {
+    "path": "C:\\Users\\chinni krishna\\Downloads\\archive\\output\\svc.joblib",
+    "accuracy": 0.8571428571428571
+  },
+  "logistic": {
+    "path": "C:\\Users\\chinni krishna\\Downloads\\archive\\output\\logistic.joblib",
+    "accuracy": 0.8571428571428571
+  },
+  "sgd": {
+    "path": null,
+    "error": "The 'loss' parameter of SGDClassifier must be a str among {'huber', 'squared_error', 'squared_epsilon_insensitive', 'epsilon_insensitive', 'squared_hinge', 'perceptron', 'log_loss', 'hinge', 'modified_huber'}. Got 'log' instead."
+  }
+}
