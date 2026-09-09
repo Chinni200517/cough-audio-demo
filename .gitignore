@@ -1,0 +1,21 @@
+# Local environments and editor state
+.venv/
+.tools/
+.gradio/
+.hf/
+.vscode/
+__pycache__/
+*.py[cod]
+
+# Generated runtime and execution outputs
+runtime/
+run_results/
+*.log
+
+# Temporary media and reports
+aerova-*.pdf
+aerova-*.png
+
+# OS files
+.DS_Store
+Thumbs.db
