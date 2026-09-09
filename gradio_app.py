@@ -398,21 +398,25 @@ def resolve_audio_path(audio_data, audio_file, audio_url):
 
     if audio_file is not None:
         if isinstance(audio_file, dict):
-            for key in ["name", "file_name", "filepath", "tmp_path"]:
+            for key in ["path", "name", "file_name", "filepath", "tmp_path"]:
                 if key in audio_file and audio_file[key]:
                     return audio_file[key]
-        if hasattr(audio_file, "name"):
-            return audio_file.name
+        for attribute in ("path", "name", "file_name", "filepath", "tmp_path"):
+            value = getattr(audio_file, attribute, None)
+            if value:
+                return value
         if isinstance(audio_file, str):
             return audio_file
 
     if audio_data is not None:
         if isinstance(audio_data, dict):
-            for key in ["name", "file_name", "filepath", "tmp_path"]:
+            for key in ["path", "name", "file_name", "filepath", "tmp_path"]:
                 if key in audio_data and audio_data[key]:
                     return audio_data[key]
-        if hasattr(audio_data, "name"):
-            return audio_data.name
+        for attribute in ("path", "name", "file_name", "filepath", "tmp_path"):
+            value = getattr(audio_data, attribute, None)
+            if value:
+                return value
         return audio_data
 
     return None
@@ -424,7 +428,7 @@ def predict(audio_data, audio_file, audio_url, manual_notes, model_filename, gen
 
         audio_path = resolve_audio_path(audio_data, audio_file, audio_url)
         if audio_path is None:
-            return '<div class="result-card result-error"><strong>No audio yet</strong><span>Upload a recording, use your microphone, or paste an audio URL to begin.</span></div>', ""
+            return '<div class="result-card result-error"><strong>No audio yet</strong><span>Upload a recording, use your microphone, or paste an audio URL to begin.</span></div>', "", "", None, "", {}
 
         audio_quality = validate_audio_quality(audio_path)
         audio_quality_html = quality_html(audio_quality)
@@ -446,19 +450,23 @@ def predict(audio_data, audio_file, audio_url, manual_notes, model_filename, gen
 
         X = preprocessor.transform(input_df)
 
-        model_path = os.path.join(ARTIFACT_DIR, model_filename) if model_filename else os.path.join(ARTIFACT_DIR, "model.joblib")
-        if not os.path.exists(model_path):
-            return f'<div class="result-card result-error"><strong>Model unavailable</strong><span>{escape(str(model_filename))}</span></div>', ""
+        model_path = os.path.join(ARTIFACT_DIR, model_filename) if model_filename else ""
+        if not model_path or not os.path.exists(model_path):
+            compatible_files = compatible_model_files(preprocessor, list_available_models())
+            fallback = choose_best_model(compatible_files)
+            model_path = os.path.join(ARTIFACT_DIR, fallback) if fallback else ""
+        if not model_path or not os.path.exists(model_path):
+            return f'<div class="result-card result-error"><strong>Model unavailable</strong><span>{escape(str(model_filename or "No compatible model found"))}</span></div>', "", audio_quality_html, None, "", {"quality": audio_quality}
 
         model = joblib.load(model_path)
         expected_features = len(preprocessor.get_feature_names_out())
         actual_features = getattr(model, "n_features_in_", expected_features)
         if actual_features != expected_features:
-            raise ValueError(
-                f"Model '{os.path.basename(model_path)}' expects {actual_features} features, "
-                f"but the loaded preprocessor produces {expected_features}. "
-                "Choose a compatible model or retrain the stale artifact."
-            )
+            fallback = choose_best_model(compatible_model_files(preprocessor, list_available_models()))
+            if not fallback:
+                raise ValueError(f"Model '{os.path.basename(model_path)}' is incompatible with the loaded preprocessor.")
+            model_path = os.path.join(ARTIFACT_DIR, fallback)
+            model = joblib.load(model_path)
         # Some saved ensemble models retain n_jobs=-1. On restricted Windows
         # hosts that makes joblib create worker pipes and raises WinError 5.
         if hasattr(model, "n_jobs"):
@@ -502,7 +510,7 @@ def predict(audio_data, audio_file, audio_url, manual_notes, model_filename, gen
         }
         return result_html, details_html, audio_quality_html, chart_path, comparison_html(comparison_rows), metadata
     except Exception as exc:
-        return f'<div class="result-card result-error"><strong>Something went wrong</strong><span>{escape(str(exc))}</span></div>', ""
+        return f'<div class="result-card result-error"><strong>Something went wrong</strong><span>{escape(str(exc))}</span></div>', "", "", None, "", {}
 
 
 def main():
@@ -549,6 +557,7 @@ def main():
         "server_name": args.host,
         "server_port": args.port,
         "share": args.share,
+        "show_error": True,
         "theme": gr.themes.Base(),
         "css": APP_CSS,
     }

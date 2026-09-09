@@ -653,30 +653,59 @@ def _run_prediction(predict_fn, email, *values):
     eml_link = f"data:message/rfc822;charset=utf-8,{quote(eml_text)}"
     html_link = f"data:text/html;charset=utf-8,{quote(email_report)}"
     pdf_path = None
+    report_notice = ""
     if extended and metadata.get("label"):
+      try:
         pdf_path = create_pdf_report(
-            patient_id=patient_id, email=str(email or ""), age=age, gender=str(gender),
-            result_html=result, details_html=details, model=str(metadata.get("model", model)),
-            confidence=float(metadata.get("confidence", 0)), label=str(metadata.get("label", "Readout")),
-            risk=str(metadata.get("risk", "unknown")), quality=metadata.get("quality", {}),
-            comparison=metadata.get("comparison", []), chart_path=chart_path,
+          patient_id=patient_id, email=str(email or ""), age=age, gender=str(gender),
+          result_html=result, details_html=details, model=str(metadata.get("model", model)),
+          confidence=float(metadata.get("confidence", 0)), label=str(metadata.get("label", "Readout")),
+          risk=str(metadata.get("risk", "unknown")), quality=metadata.get("quality", {}),
+          comparison=metadata.get("comparison", []), chart_path=chart_path,
         )
+      except Exception as exc:
+        report_notice = f"<div class=\"notice\">Prediction completed. The downloadable PDF is unavailable: {escape(str(exc))}</div>"
+      try:
         save_assessment({
-            "patient_id": patient_id, "date": report_date, "label": metadata.get("label", "Readout"),
-            "risk": metadata.get("risk", "unknown"), "confidence": float(metadata.get("confidence", 0)),
-            "age": age, "gender": str(gender), "model": metadata.get("model", model),
+          "patient_id": patient_id, "date": report_date, "label": metadata.get("label", "Readout"),
+          "risk": metadata.get("risk", "unknown"), "confidence": float(metadata.get("confidence", 0)),
+          "age": age, "gender": str(gender), "model": metadata.get("model", model),
         })
+      except Exception as exc:
+        report_notice += f"<div class=\"notice\">Prediction completed. History could not be saved: {escape(str(exc))}</div>"
     share_html = f'''<div class="share-actions">
         <a class="share-action" href="{escape(email_link)}">Open email draft</a>
         <a class="share-action" href="{escape(eml_link)}" download="auralis-{escape(patient_id.lower())}.eml">Download email file (.eml)</a>
         <a class="share-action" href="{escape(html_link)}" download="auralis-{escape(patient_id.lower())}.html">Download prescription-style report</a>
-    </div><p class="notification"><b>Report {escape(patient_id)}</b> is prepared for {escape(str(email))}. The .eml file preserves the designed Auralis email layout.</p>'''
+    </div><p class="notification"><b>Report {escape(patient_id)}</b> is prepared for {escape(str(email))}. The .eml file preserves the designed Auralis email layout.</p>{report_notice}'''
     if not extended:
-        return result, details + share_html, gr.update(visible=False), gr.update(visible=True)
+      return (
+        result,
+        details + share_html,
+        "",
+        None,
+        "",
+        None,
+        history_dashboard_html(),
+        gr.update(visible=False),
+        gr.update(visible=True),
+      )
     return (
         result, details + share_html, quality_markup, chart_path, comparison_markup,
         pdf_path, history_dashboard_html(), gr.update(visible=False), gr.update(visible=True),
     )
+
+
+def _safe_run_prediction(predict_fn, email, *values):
+  try:
+    return _run_prediction(predict_fn, email, *values)
+  except Exception as exc:
+    try:
+      history = history_dashboard_html()
+    except Exception:
+      history = ""
+    error_html = f'<div class="result-card result-error"><strong>Readout failed</strong><span>{escape(str(exc))}</span></div>'
+    return error_html, "", "", None, "", None, history, gr.update(visible=True), gr.update(visible=False)
 
 
 def build_app(predict_fn, model_files, default_model):
@@ -736,7 +765,7 @@ def build_app(predict_fn, model_files, default_model):
             with gr.Column(elem_classes=["panel"]) as audio_step:
                 gr.HTML('<h2 class="panel-title">Bring a recording</h2><p class="panel-copy">A short, clear cough recording works best.</p>')
                 audio_input = gr.Audio(type="filepath", sources=["upload", "microphone"], label="Upload or record", elem_classes=["audio-box"])
-                file_input = gr.File(file_count="single", label="Or choose a sound/video file")
+                file_input = gr.File(type="filepath", file_count="single", label="Or choose a sound/video file")
                 url_input = gr.Textbox(label="Or paste a direct audio URL", placeholder="https://...")
                 audio_notice = gr.HTML()
                 continue_audio = gr.Button("Continue to context", variant="primary", elem_classes=["primary-button"])
@@ -779,7 +808,7 @@ def build_app(predict_fn, model_files, default_model):
         back_result.click(lambda: (gr.update(visible=False), gr.update(visible=True)), outputs=[result_step, context_step])
         new_assessment.click(lambda: (gr.update(visible=False), gr.update(visible=True), gr.update(visible=False), "", ""), outputs=[result_step, audio_step, context_step, prediction_output, details_output])
         predict_button.click(
-            lambda email, *values: _run_prediction(predict_fn, email, *values),
+          lambda email, *values: _safe_run_prediction(predict_fn, email, *values),
             inputs=[login_email_state, audio_input, file_input, url_input, manual_notes, model_choice, gender, age, cough_detected, respiratory_condition, fever_muscle_pain],
             outputs=[prediction_output, details_output, quality_output, explanation_chart, model_comparison_output, pdf_report, history_output, context_step, result_step],
         )
