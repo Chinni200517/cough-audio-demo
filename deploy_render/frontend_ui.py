@@ -50,6 +50,8 @@ def _gemini_history(history):
 def _gemini_answer(question, history):
   api_key = os.environ.get("GEMINI_API_KEY", "").strip()
   if not api_key:
+    api_key = next((str(value).strip() for name, value in os.environ.items() if name.casefold() == "gemini_api_key"), "")
+  if not api_key:
     return None
   model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
   payload = {

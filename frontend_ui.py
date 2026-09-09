@@ -663,6 +663,17 @@ def _gemini_answer(question, history):
     """Return a Gemini answer when configured, without exposing API failures to users."""
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
+        # Render/Linux environment-variable names are case-sensitive. Accept a
+        # legacy mixed-case name too, so existing service configuration works.
+        api_key = next(
+            (
+                str(value).strip()
+                for name, value in os.environ.items()
+                if name.casefold() == "gemini_api_key"
+            ),
+            "",
+        )
+    if not api_key:
         return None
 
     model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"

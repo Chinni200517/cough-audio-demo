@@ -37,7 +37,7 @@ class FrontendContractTests(unittest.TestCase):
         self.assertIn("Download email file", details)
         self.assertIn("Healthy", details)
 
-    @patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"})
+    @patch.dict("os.environ", {"Gemini_API_Key": "test-key"}, clear=True)
     @patch("frontend_ui.requests.post")
     def test_chat_uses_gemini_for_general_questions(self, post):
         response = Mock()
