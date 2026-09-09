@@ -52,6 +52,10 @@ class FrontendContractTests(unittest.TestCase):
         self.assertEqual(history[-1]["role"], "assistant")
         self.assertEqual(history[-1]["content"], "Gemini-generated answer.")
         self.assertEqual(post.call_args.kwargs["headers"]["x-goog-api-key"], "test-key")
+        self.assertIn(
+            "Chinni200517",
+            post.call_args.kwargs["json"]["systemInstruction"]["parts"][0]["text"],
+        )
 
 
 if __name__ == "__main__":

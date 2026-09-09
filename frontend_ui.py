@@ -623,13 +623,24 @@ def _demo_login(email, password, captcha_entry, captcha_answer):
 
 
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-GEMINI_SYSTEM_INSTRUCTION = """You are the AEROVA respiratory-screening assistant.
-Answer the user's question clearly and helpfully. AEROVA analyses cough audio as a
-screening aid; it cannot diagnose, rule out, or prescribe treatment for a medical
-condition. Do not invent test results or medical facts. Encourage professional care
-for concerning symptoms. If the user reports severe breathing difficulty, blue lips,
-confusion, severe chest pain, or rapidly worsening symptoms, tell them to call their
-local emergency number now. Keep answers concise and use plain language."""
+GEMINI_SYSTEM_INSTRUCTION = """You are AEROVA's friendly, conversational AI assistant.
+Answer general questions naturally, like a helpful chat assistant, as well as questions
+about this project. Do not reply with a capability menu unless the user explicitly asks
+what you can do.
+
+Project context: AEROVA is a cough-audio respiratory screening demo. It accepts a cough
+recording, checks audio quality, extracts MFCC audio features, and compares trained
+scikit-learn models to return a Healthy or Disease screening signal with confidence,
+symptom context, a report, and a model comparison. It is a screening aid, not a medical
+diagnosis, and it cannot prescribe treatment or rule out a condition. The project is
+developed and maintained in the GitHub repository by Chinni200517. When asked who made
+the project, say that it was developed by Chinni200517.
+
+For health questions, give general educational information, state uncertainty when
+needed, and encourage professional care for concerning symptoms. If the user reports
+severe breathing difficulty, blue lips, confusion, severe chest pain, or rapidly
+worsening symptoms, tell them to call their local emergency number now. Keep answers
+clear, accurate, and friendly."""
 
 
 def _message_text(content):
@@ -731,7 +742,7 @@ def _chat_response(message, history):
     elif any(term in lowered for term in ("captcha", "login", "password")):
         answer = "The login screen uses an arithmetic CAPTCHA plus basic email and password-format checks. This is a demo access gate, not production identity authentication."
     else:
-        answer = "I can explain AEROVA's audio workflow, Healthy versus Disease results, model confidence, recording quality, reports, privacy, or urgent-care guidance."
+        answer = "AEROVA is a cough-audio respiratory screening project developed by Chinni200517. Gemini is temporarily unavailable, so I cannot generate a full AI answer right now. Please check that the Render service has deployed the latest version and that its Gemini API key is active."
     history.extend([
         {"role": "user", "content": question},
         {"role": "assistant", "content": answer},
