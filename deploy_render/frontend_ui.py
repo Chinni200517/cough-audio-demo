@@ -9,26 +9,54 @@ import gradio as gr
 from reporting import create_pdf_report, history_dashboard_html, save_assessment
 
 
+def _new_captcha():
+  first = secrets.randbelow(8) + 2
+  second = secrets.randbelow(8) + 2
+  return f"What is {first} + {second}?", str(first + second)
+
+
+def _chat_response(message, history):
+  history = list(history or [])
+  question = str(message or "").strip()
+  lowered = question.lower()
+  if not question:
+    return history, ""
+  if any(term in lowered for term in ("emergency", "can't breathe", "cannot breathe", "blue lips", "chest pain")):
+    answer = "AEROVA is a screening aid, not emergency care. For severe breathing difficulty, blue lips, confusion, or severe chest pain, call your local emergency number now."
+  elif any(term in lowered for term in ("healthy", "disease", "result", "prediction", "confidence")):
+    answer = "AEROVA analyses cough audio with trained classification models and combines the sound signal with symptoms. Healthy means no obvious abnormal pattern was detected; Disease means an abnormal respiratory signal was detected. Neither result is a diagnosis."
+  elif any(term in lowered for term in ("audio", "recording", "upload", "microphone")):
+    answer = "Use a clear cough recording from the upload or microphone control. A short recording with low background noise gives AEROVA a better signal; the quality check flags silence, clipping, and very short recordings."
+  elif any(term in lowered for term in ("model", "algorithm", "machine learning")):
+    answer = "AEROVA loads compatible trained models, selects the strongest validated model, and shows model comparison with confidence and validation accuracy."
+  elif any(term in lowered for term in ("privacy", "data", "history", "report")):
+    answer = "AEROVA creates a patient ID, screening summary, optional PDF, and local assessment history for this demo. Do not enter unnecessary personal information, and treat reports as screening aids."
+  else:
+    answer = "I can explain AEROVA's audio workflow, Healthy versus Disease results, model confidence, recording quality, reports, privacy, or urgent-care guidance."
+  history.append([question, answer])
+  return history, ""
+
+
 APP_CSS = """
 :root {
-  --bg: #071b24;
-  --bg-strong: #0b3440;
-  --panel: rgba(10, 35, 43, 0.94);
-  --panel-soft: rgba(15, 58, 63, 0.9);
-  --ink: #f4fbf8;
-  --muted: #bfd5d2;
+  --bg: #061c2d;
+  --bg-strong: #0b2d42;
+  --panel: rgba(16, 35, 49, 0.9);
+  --panel-soft: rgba(20, 51, 67, 0.82);
+  --ink: #eaf7ff;
+  --muted: #9eb8c9;
   --primary: #20b7a5;
   --primary-deep: #087f78;
   --secondary: #a9f0d5;
   --accent: #f17c55;
   --success: #1a9b68;
   --warning: #bd7810;
-  --line: rgba(170, 228, 215, 0.3);
+  --line: rgba(148, 196, 220, 0.25);
   --shadow: 0 22px 50px rgba(5, 17, 29, 0.45);
 }
 
 body, .gradio-container {
-  background: radial-gradient(circle at top left, #15505a 0%, #092c35 38%, #06171e 100%) !important;
+  background: radial-gradient(circle at top left, #0d334d 0%, #071d2d 38%, #050f18 100%) !important;
   color: var(--ink) !important;
   font-family: 'Segoe UI', Arial, sans-serif !important;
 }
@@ -253,12 +281,7 @@ input:focus, textarea:focus, select:focus {
   background: linear-gradient(180deg, #ffffff 0%, #f7fbfd 100%);
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
-  color: #17343a;
-}
-
-.result-card p, .result-card strong, .details-panel p, .details-panel strong,
-.result-card h1, .result-card h2, .details-panel h1, .details-panel h2 {
-  color: #17343a !important;
+  color: #123048;
 }
 
 .result-card {
@@ -449,27 +472,6 @@ input:focus, textarea:focus, select:focus {
   margin-top: 14px;
 }
 
-.captcha-row { display: flex; align-items: end; gap: 10px; margin-top: 14px; }
-.captcha-question { color: #e8fff5; font: 700 14px Arial, sans-serif; padding: 11px 13px; background: rgba(32,183,165,.16); border: 1px solid rgba(169,240,213,.35); border-radius: 10px; }
-.captcha-refresh { min-width: 44px !important; }
-
-.chat-panel { margin-top: 16px; }
-.chatbot-note { color: var(--muted); font: 12px/1.5 Arial, sans-serif; margin: 0 0 10px; }
-.chat-panel {
-  position: fixed !important;
-  right: 22px;
-  bottom: 22px;
-  z-index: 50;
-  width: min(360px, calc(100vw - 44px));
-  margin: 0 !important;
-  background: rgba(7, 27, 36, 0.98) !important;
-  border: 1px solid rgba(169, 240, 213, 0.45) !important;
-  border-radius: 16px !important;
-  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.35) !important;
-}
-.chat-panel > .label-wrap { color: #f4fbf8 !important; }
-.chat-panel .wrap { background: transparent !important; }
-
 .progress {
   display: flex;
   gap: 10px;
@@ -582,6 +584,21 @@ input:focus, textarea:focus, select:focus {
   border-radius: 12px;
 }
 
+.chat-panel {
+  position: fixed !important;
+  right: 22px;
+  bottom: 22px;
+  z-index: 50;
+  width: min(360px, calc(100vw - 44px));
+  margin: 0 !important;
+  background: rgba(7, 27, 36, 0.98) !important;
+  border: 1px solid rgba(169, 240, 213, 0.45) !important;
+  border-radius: 16px !important;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.35) !important;
+}
+.chat-panel > .label-wrap { color: #f4fbf8 !important; }
+.chat-panel .wrap { background: transparent !important; }
+
 @media (max-width: 700px) {
   .chat-panel { right: 10px; bottom: 10px; width: calc(100vw - 20px); }
   .hero-hospital { flex-direction: column; align-items: flex-start; }
@@ -594,12 +611,6 @@ input:focus, textarea:focus, select:focus {
 """
 
 
-def _new_captcha():
-    first = secrets.randbelow(8) + 2
-    second = secrets.randbelow(8) + 2
-    return f"What is {first} + {second}?", str(first + second)
-
-
 def _demo_login(email, password, captcha_entry, captcha_answer):
     email_text = str(email or "").strip()
     password_text = str(password or "")
@@ -610,38 +621,10 @@ def _demo_login(email, password, captcha_entry, captcha_answer):
         and re.search(r"\d", password_text)
         and re.search(r"[^A-Za-z0-9]", password_text)
     )
-    if (re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email_text)
-            and strong_password and str(captcha_entry or "").strip() == str(captcha_answer or "")):
+    if re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email_text) and strong_password and str(captcha_entry or "").strip() == str(captcha_answer or ""):
         return gr.update(visible=False), gr.update(visible=True), email_text, f'<div class="notification">Signed in. Reports will be addressed to {escape(email_text)}.</div>'
-    if str(captcha_entry or "").strip() != str(captcha_answer or ""):
-        message = "CAPTCHA answer is incorrect. Refresh the challenge and try again."
-    else:
-        message = "Use a valid email and a password with at least 8 characters, including uppercase, lowercase, number, and special character."
+    message = "CAPTCHA answer is incorrect." if str(captcha_entry or "").strip() != str(captcha_answer or "") else "Use a valid email and a password with at least 8 characters, including uppercase, lowercase, number, and special character."
     return gr.update(visible=True), gr.update(visible=False), "", f'<div class="notice">{message}</div>'
-
-
-def _chat_response(message, history):
-    history = list(history or [])
-    question = str(message or "").strip()
-    lowered = question.lower()
-    if not question:
-        return history, ""
-    if any(term in lowered for term in ("emergency", "can't breathe", "cannot breathe", "blue lips", "chest pain")):
-        answer = "AEROVA is a screening aid, not emergency care. For severe breathing difficulty, blue lips, confusion, or severe chest pain, call your local emergency number now."
-    elif any(term in lowered for term in ("healthy", "disease", "result", "prediction", "confidence")):
-        answer = "AEROVA analyses cough audio with trained classification models and combines the sound signal with symptoms. Healthy means no obvious abnormal pattern was detected; Disease means an abnormal respiratory signal was detected. Neither result is a diagnosis."
-    elif any(term in lowered for term in ("audio", "recording", "upload", "microphone")):
-        answer = "Use a clear cough recording from the upload or microphone control. A short recording with low background noise gives AEROVA a better signal; the quality check flags silence, clipping, and very short recordings."
-    elif any(term in lowered for term in ("model", "algorithm", "machine learning")):
-        answer = "AEROVA loads the compatible trained models in output/, selects the strongest validated model, and shows a model comparison with confidence and validation accuracy."
-    elif any(term in lowered for term in ("privacy", "data", "history", "report")):
-        answer = "AEROVA creates a patient ID, a screening summary, an optional PDF, and a local assessment history for this demo. Do not enter unnecessary personal information, and treat generated reports as screening aids."
-    elif any(term in lowered for term in ("captcha", "login", "password")):
-        answer = "The login screen uses an arithmetic CAPTCHA plus basic email and password-format checks. This is a demo access gate, not production identity authentication."
-    else:
-        answer = "I can explain AEROVA's audio workflow, Healthy versus Disease results, model confidence, recording quality, reports, privacy, or urgent-care guidance."
-    history.append([question, answer])
-    return history, ""
 
 
 def _continue_audio(audio_data, audio_file, audio_url):
@@ -726,7 +709,7 @@ def _run_prediction(predict_fn, email, *values):
           comparison=metadata.get("comparison", []), chart_path=chart_path,
         )
       except Exception as exc:
-        report_notice = f'<div class="notice">Prediction completed. The downloadable PDF is unavailable: {escape(str(exc))}</div>'
+        report_notice = f"<div class=\"notice\">Prediction completed. The downloadable PDF is unavailable: {escape(str(exc))}</div>"
       try:
         save_assessment({
           "patient_id": patient_id, "date": report_date, "label": metadata.get("label", "Readout"),
@@ -734,7 +717,7 @@ def _run_prediction(predict_fn, email, *values):
           "age": age, "gender": str(gender), "model": metadata.get("model", model),
         })
       except Exception as exc:
-        report_notice += f'<div class="notice">History could not be saved: {escape(str(exc))}</div>'
+        report_notice += f"<div class=\"notice\">Prediction completed. History could not be saved: {escape(str(exc))}</div>"
     share_html = f'''<div class="share-actions">
         <a class="share-action" href="{escape(email_link)}">Open email draft</a>
         <a class="share-action" href="{escape(eml_link)}" download="aerova-{escape(patient_id.lower())}.eml">Download email file (.eml)</a>
@@ -758,9 +741,20 @@ def _run_prediction(predict_fn, email, *values):
     )
 
 
+def _safe_run_prediction(predict_fn, email, *values):
+  try:
+    return _run_prediction(predict_fn, email, *values)
+  except Exception as exc:
+    try:
+      history = history_dashboard_html()
+    except Exception:
+      history = ""
+    error_html = f'<div class="result-card result-error"><strong>Readout failed</strong><span>{escape(str(exc))}</span></div>'
+    return error_html, "", "", None, "", None, history, gr.update(visible=True), gr.update(visible=False)
+
+
 def build_app(predict_fn, model_files, default_model):
-  captcha_question, captcha_answer = _new_captcha()
-  with gr.Blocks(title="AEROVA | Respiratory sound check") as interface:
+    with gr.Blocks(title="AEROVA | Respiratory sound check") as interface:
         with gr.Column(elem_classes=["login-shell"]) as login_view:
             gr.HTML('''<div class="login-panel">
                 <div class="login-mark">AEROVA</div>
@@ -787,10 +781,10 @@ def build_app(predict_fn, model_files, default_model):
             ''')
             login_email = gr.Textbox(label="Email", placeholder="you@example.com")
             login_password = gr.Textbox(label="Password", type="password", placeholder="8+ chars: Aa1!")
-            with gr.Row(elem_classes=["captcha-row"]):
-              captcha_prompt = gr.Markdown(f'<div class="captcha-question">{captcha_question}</div>')
-              captcha_entry = gr.Textbox(label="CAPTCHA answer", placeholder="Enter the number", scale=2)
-              captcha_refresh = gr.Button("↻", elem_classes=["secondary-button", "captcha-refresh"], scale=0)
+            captcha_prompt, captcha_answer = _new_captcha()
+            captcha_question = gr.Markdown(f"**{captcha_prompt}**")
+            captcha_entry = gr.Textbox(label="CAPTCHA answer", placeholder="Enter the number")
+            captcha_refresh = gr.Button("Refresh CAPTCHA", elem_classes=["secondary-button"])
             captcha_answer_state = gr.State(captcha_answer)
             login_button = gr.Button("Continue securely", variant="primary", elem_classes=["primary-button"])
             login_notice = gr.HTML()
@@ -821,7 +815,7 @@ def build_app(predict_fn, model_files, default_model):
             with gr.Column(elem_classes=["panel"]) as audio_step:
                 gr.HTML('<h2 class="panel-title">Bring a recording</h2><p class="panel-copy">A short, clear cough recording works best.</p>')
                 audio_input = gr.Audio(type="filepath", sources=["upload", "microphone"], label="Upload or record", elem_classes=["audio-box"])
-                file_input = gr.File(file_count="single", label="Or choose a sound/video file")
+                file_input = gr.File(type="filepath", file_count="single", label="Or choose a sound/video file")
                 url_input = gr.Textbox(label="Or paste a direct audio URL", placeholder="https://...")
                 audio_notice = gr.HTML()
                 continue_audio = gr.Button("Continue to context", variant="primary", elem_classes=["primary-button"])
@@ -856,25 +850,25 @@ def build_app(predict_fn, model_files, default_model):
                     new_assessment = gr.Button("End assessment", elem_classes=["secondary-button"])
                 gr.HTML('<div class="safety-alert"><strong>When to seek care:</strong> severe breathing difficulty, chest pain, confusion, blue lips, or rapidly worsening symptoms require urgent medical attention.</div>')
                 gr.HTML('<p class="footnote">This is a screening aid, not a diagnosis. If you feel seriously unwell or have trouble breathing, seek medical care promptly.</p>')
-            with gr.Accordion("AEROVA respiratory assistant", open=False, elem_classes=["chat-panel"]):
-                gr.Markdown("Ask about the audio workflow, Healthy versus Disease results, recording quality, reports, or urgent-care guidance.", elem_classes=["chatbot-note"])
+            with gr.Accordion("AEROVA respiratory assistant", open=False):
+                gr.Markdown("Ask about AEROVA results, audio quality, reports, models, privacy, or urgent-care guidance.")
                 chatbot = gr.Chatbot(label="AEROVA assistant", height=280)
                 with gr.Row():
                     chat_input = gr.Textbox(label="Message", placeholder="How does AEROVA interpret a healthy result?", scale=5)
-                    chat_send = gr.Button("Ask", variant="primary", elem_classes=["primary-button"], scale=1)
+                    chat_send = gr.Button("Ask", variant="primary", scale=1)
 
-        login_button.click(_demo_login, [login_email, login_password, captcha_entry, captcha_answer_state], [login_view, workspace, login_email_state, login_notice])
-        captcha_refresh.click(lambda: _new_captcha(), outputs=[captcha_prompt, captcha_answer_state])
-        chat_send.click(_chat_response, [chat_input, chatbot], [chatbot, chat_input])
-        chat_input.submit(_chat_response, [chat_input, chatbot], [chatbot, chat_input])
+            login_button.click(_demo_login, [login_email, login_password, captcha_entry, captcha_answer_state], [login_view, workspace, login_email_state, login_notice])
+            captcha_refresh.click(lambda: _new_captcha(), outputs=[captcha_question, captcha_answer_state])
+            chat_send.click(_chat_response, [chat_input, chatbot], [chatbot, chat_input])
+            chat_input.submit(_chat_response, [chat_input, chatbot], [chatbot, chat_input])
         history_refresh.click(history_dashboard_html, [history_search], [history_output])
         continue_audio.click(_continue_audio, [audio_input, file_input, url_input], [audio_step, context_step, audio_notice])
         back_audio.click(lambda: (gr.update(visible=True), gr.update(visible=False)), outputs=[audio_step, context_step])
         back_result.click(lambda: (gr.update(visible=False), gr.update(visible=True)), outputs=[result_step, context_step])
         new_assessment.click(lambda: (gr.update(visible=False), gr.update(visible=True), gr.update(visible=False), "", ""), outputs=[result_step, audio_step, context_step, prediction_output, details_output])
         predict_button.click(
-            lambda email, *values: _run_prediction(predict_fn, email, *values),
+          lambda email, *values: _safe_run_prediction(predict_fn, email, *values),
             inputs=[login_email_state, audio_input, file_input, url_input, manual_notes, model_choice, gender, age, cough_detected, respiratory_condition, fever_muscle_pain],
             outputs=[prediction_output, details_output, quality_output, explanation_chart, model_comparison_output, pdf_report, history_output, context_step, result_step],
         )
-  return interface
+    return interface
