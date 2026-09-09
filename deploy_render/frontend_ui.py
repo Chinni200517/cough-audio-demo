@@ -41,6 +41,8 @@ clear, accurate, and friendly."""
 def _message_text(content):
   if isinstance(content, str):
     return content.strip()
+  if isinstance(content, dict):
+    return str(content.get("text", "") or content.get("content", "")).strip()
   if isinstance(content, list):
     return "\n".join(str(item.get("text", "")) for item in content if isinstance(item, dict) and item.get("type") == "text").strip()
   return ""
@@ -80,8 +82,15 @@ def _gemini_answer(question, history):
     return None
 
 
+def _safe_gemini_answer(question, history):
+  try:
+    return _gemini_answer(question, history)
+  except Exception:
+    return None
+
+
 def _chat_response(message, history):
-  history = list(history or [])
+  history = list(history or []) if isinstance(history, (list, tuple)) else []
   if history and isinstance(history[0], (list, tuple)):
     normalized_history = []
     for entry in history:
@@ -96,7 +105,7 @@ def _chat_response(message, history):
     return history, ""
   if any(term in lowered for term in ("emergency", "can't breathe", "cannot breathe", "blue lips", "chest pain")):
     answer = "AEROVA is a screening aid, not emergency care. For severe breathing difficulty, blue lips, confusion, or severe chest pain, call your local emergency number now."
-  elif (gemini_response := _gemini_answer(question, history)):
+  elif (gemini_response := _safe_gemini_answer(question, history)):
     answer = gemini_response
   elif any(term in lowered for term in ("healthy", "disease", "result", "prediction", "confidence")):
     answer = "AEROVA analyses cough audio with trained classification models and combines the sound signal with symptoms. Healthy means no obvious abnormal pattern was detected; Disease means an abnormal respiratory signal was detected. Neither result is a diagnosis."
@@ -107,7 +116,7 @@ def _chat_response(message, history):
   elif any(term in lowered for term in ("privacy", "data", "history", "report")):
     answer = "AEROVA creates a patient ID, screening summary, optional PDF, and local assessment history for this demo. Do not enter unnecessary personal information, and treat reports as screening aids."
   else:
-    answer = "AEROVA is a cough-audio respiratory screening project developed by Chinni200517. Gemini is temporarily unavailable, so I cannot generate a full AI answer right now. Please check that the Render service has deployed the latest version and that its Gemini API key is active."
+    answer = "AEROVA is a cough-audio respiratory screening project developed by Chinni200517. The AI service is temporarily unavailable, but I can still explain audio quality, screening results, models, reports, privacy, or urgent-care guidance."
   history.extend([{"role": "user", "content": question}, {"role": "assistant", "content": answer}])
   return history, ""
 
