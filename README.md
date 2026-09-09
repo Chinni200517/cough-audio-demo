@@ -117,6 +117,19 @@ python app.py
 # Access at: http://localhost:5000
 ```
 
+### Gemini-powered chatbot
+
+The AEROVA assistant uses Gemini for general questions when `GEMINI_API_KEY` is set. Do not put the key in source code or commit it to GitHub.
+
+For local use (PowerShell):
+
+```powershell
+$env:GEMINI_API_KEY = "your-key-from-google-ai-studio"
+python gradio_app.py
+```
+
+For Render, open the service dashboard, select **Environment**, add `GEMINI_API_KEY` as a secret, and redeploy. `GEMINI_MODEL` defaults to `gemini-2.5-flash` and can be changed in the environment if needed. Until the secret is set, the assistant remains available with its built-in safety-focused responses.
+
 ### Docker Deployment
 
 ```bash

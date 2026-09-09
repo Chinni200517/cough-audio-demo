@@ -1,10 +1,12 @@
 from html import escape
 from datetime import datetime
+import os
 import re
 import secrets
 from urllib.parse import quote
 
 import gradio as gr
+import requests
 
 from reporting import create_pdf_report, history_dashboard_html, save_assessment
 
@@ -15,14 +17,74 @@ def _new_captcha():
   return f"What is {first} + {second}?", str(first + second)
 
 
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+GEMINI_SYSTEM_INSTRUCTION = """You are the AEROVA respiratory-screening assistant.
+Answer the user's question clearly and helpfully. AEROVA analyses cough audio as a
+screening aid; it cannot diagnose, rule out, or prescribe treatment for a medical
+condition. Do not invent test results or medical facts. Encourage professional care
+for concerning symptoms. If the user reports severe breathing difficulty, blue lips,
+confusion, severe chest pain, or rapidly worsening symptoms, tell them to call their
+local emergency number now. Keep answers concise and use plain language."""
+
+
+def _message_text(content):
+  if isinstance(content, str):
+    return content.strip()
+  if isinstance(content, list):
+    return "\n".join(str(item.get("text", "")) for item in content if isinstance(item, dict) and item.get("type") == "text").strip()
+  return ""
+
+
+def _gemini_history(history):
+  contents = []
+  for entry in history:
+    if not isinstance(entry, dict):
+      continue
+    text = _message_text(entry.get("content"))
+    if text:
+      role = "model" if entry.get("role") == "assistant" else "user"
+      contents.append({"role": role, "parts": [{"text": text}]})
+  return contents[-12:]
+
+
+def _gemini_answer(question, history):
+  api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+  if not api_key:
+    return None
+  model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
+  payload = {
+    "systemInstruction": {"parts": [{"text": GEMINI_SYSTEM_INSTRUCTION}]},
+    "contents": _gemini_history(history) + [{"role": "user", "parts": [{"text": question}]}],
+    "generationConfig": {"temperature": 0.3, "maxOutputTokens": 600},
+  }
+  try:
+    response = requests.post(GEMINI_API_URL.format(model=model), headers={"Content-Type": "application/json", "x-goog-api-key": api_key}, json=payload, timeout=25)
+    response.raise_for_status()
+    parts = response.json()["candidates"][0]["content"]["parts"]
+    answer = "\n".join(str(part.get("text", "")) for part in parts).strip()
+    return answer or None
+  except (requests.RequestException, KeyError, IndexError, TypeError, ValueError):
+    return None
+
+
 def _chat_response(message, history):
   history = list(history or [])
+  if history and isinstance(history[0], (list, tuple)):
+    normalized_history = []
+    for entry in history:
+      if len(entry) > 0 and entry[0] is not None:
+        normalized_history.append({"role": "user", "content": str(entry[0])})
+      if len(entry) > 1 and entry[1] is not None:
+        normalized_history.append({"role": "assistant", "content": str(entry[1])})
+    history = normalized_history
   question = str(message or "").strip()
   lowered = question.lower()
   if not question:
     return history, ""
   if any(term in lowered for term in ("emergency", "can't breathe", "cannot breathe", "blue lips", "chest pain")):
     answer = "AEROVA is a screening aid, not emergency care. For severe breathing difficulty, blue lips, confusion, or severe chest pain, call your local emergency number now."
+  elif (gemini_response := _gemini_answer(question, history)):
+    answer = gemini_response
   elif any(term in lowered for term in ("healthy", "disease", "result", "prediction", "confidence")):
     answer = "AEROVA analyses cough audio with trained classification models and combines the sound signal with symptoms. Healthy means no obvious abnormal pattern was detected; Disease means an abnormal respiratory signal was detected. Neither result is a diagnosis."
   elif any(term in lowered for term in ("audio", "recording", "upload", "microphone")):
@@ -33,7 +95,7 @@ def _chat_response(message, history):
     answer = "AEROVA creates a patient ID, screening summary, optional PDF, and local assessment history for this demo. Do not enter unnecessary personal information, and treat reports as screening aids."
   else:
     answer = "I can explain AEROVA's audio workflow, Healthy versus Disease results, model confidence, recording quality, reports, privacy, or urgent-care guidance."
-  history.append([question, answer])
+  history.extend([{"role": "user", "content": question}, {"role": "assistant", "content": answer}])
   return history, ""
 
 

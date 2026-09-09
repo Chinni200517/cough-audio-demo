@@ -1,8 +1,9 @@
 import unittest
 import json
+from unittest.mock import Mock, patch
 
 import gradio_app
-from frontend_ui import _run_prediction
+from frontend_ui import _chat_response, _run_prediction
 
 
 class FrontendContractTests(unittest.TestCase):
@@ -35,6 +36,22 @@ class FrontendContractTests(unittest.TestCase):
         self.assertIn("mailto:person%40example.com", details)
         self.assertIn("Download email file", details)
         self.assertIn("Healthy", details)
+
+    @patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"})
+    @patch("frontend_ui.requests.post")
+    def test_chat_uses_gemini_for_general_questions(self, post):
+        response = Mock()
+        response.json.return_value = {
+            "candidates": [{"content": {"parts": [{"text": "Gemini-generated answer."}]}}]
+        }
+        post.return_value = response
+
+        history, cleared = _chat_response("What should I know about hydration?", [])
+
+        self.assertEqual(cleared, "")
+        self.assertEqual(history[-1]["role"], "assistant")
+        self.assertEqual(history[-1]["content"], "Gemini-generated answer.")
+        self.assertEqual(post.call_args.kwargs["headers"]["x-goog-api-key"], "test-key")
 
 
 if __name__ == "__main__":

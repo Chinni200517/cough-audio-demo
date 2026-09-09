@@ -1,5 +1,7 @@
 # Local environments and editor state
 .venv/
+.env
+.env.*
 .tools/
 .gradio/
 .hf/
