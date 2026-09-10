@@ -1,3 +1,20 @@
+## Gemini on the existing Render service
+
+Deploy the repository root to use the current Gemini chatbot in frontend_ui.py.
+In Render > cough-audio-demo > Environment, set GEMINI_API_KEY to your Google AI
+Studio key and GEMINI_MODEL to gemini-2.5-flash, then choose Save and deploy.
+GOOGLE_API_KEY is also accepted when GEMINI_API_KEY is absent. Never commit keys.
+Adding a key name to render.yaml alone does not supply its secret value to an
+existing service created manually.
+
+After the latest code deploys, send a general question to the assistant. If it
+uses local help, check Render Logs for aerova.gemini messages: missing key,
+HTTP 403 (permissions), 404 (model unavailable), 429 (quota), connection timeout,
+or no usable candidate. Logs omit API keys, questions, and response bodies.
+
+Environment setup: https://render.com/docs/configure-environment-variables
+Gemini thinking/output budget: https://ai.google.dev/gemini-api/docs/generate-content/thinking
+
 UPDATE: Hugging Face now requires a paid plan for new Gradio/Docker Spaces. For a free option, use deploy_render/README.md. The Hugging Face instructions below are not a free deployment path.
 
 Run locally (PowerShell, from this project folder):

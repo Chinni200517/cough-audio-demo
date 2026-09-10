@@ -1,6 +1,7 @@
 from html import escape
 from datetime import datetime
 import os
+import logging
 import re
 import secrets
 from urllib.parse import quote
@@ -623,6 +624,7 @@ def _demo_login(email, password, captcha_entry, captcha_answer):
 
 
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+GEMINI_LOG = logging.getLogger("aerova.gemini")
 GEMINI_SYSTEM_INSTRUCTION = """You are AEROVA's friendly, conversational AI assistant.
 Answer general questions naturally, like a helpful chat assistant, as well as questions
 about this project. Do not reply with a capability menu unless the user explicitly asks
@@ -687,15 +689,26 @@ def _gemini_answer(question, history):
             "",
         )
     if not api_key:
+        api_key = os.environ.get("GOOGLE_API_KEY", "").strip()
+    if not api_key:
+        GEMINI_LOG.warning("Gemini unavailable: set GEMINI_API_KEY in Render Environment and deploy.")
         return None
 
     model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
+    model = model.removeprefix("models/")
+    if not re.fullmatch(r"gemini-[A-Za-z0-9._-]+", model):
+        GEMINI_LOG.warning("Gemini unavailable: GEMINI_MODEL must be a model ID, not a URL.")
+        return None
+    generation_config = {"temperature": 0.3, "maxOutputTokens": 2048}
+    if model in {"gemini-2.5-flash", "gemini-2.5-flash-lite"}:
+        # The output limit includes thinking tokens. Reserve it for the reply.
+        generation_config["thinkingConfig"] = {"thinkingBudget": 0}
     payload = {
         "systemInstruction": {"parts": [{"text": GEMINI_SYSTEM_INSTRUCTION}]},
         "contents": _gemini_history(history) + [
             {"role": "user", "parts": [{"text": question}]}
         ],
-        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 600},
+        "generationConfig": generation_config,
     }
     try:
         response = requests.post(
@@ -706,9 +719,30 @@ def _gemini_answer(question, history):
         )
         response.raise_for_status()
         parts = response.json()["candidates"][0]["content"]["parts"]
-        answer = "\n".join(str(part.get("text", "")) for part in parts).strip()
+        answer = "\n".join(
+            part["text"] for part in parts
+            if isinstance(part, dict) and isinstance(part.get("text"), str)
+            and not part.get("thought")
+        ).strip()
+        if not answer:
+            GEMINI_LOG.warning("Gemini returned no answer text; check model output limits or safety filtering.")
         return answer or None
-    except (requests.RequestException, KeyError, IndexError, TypeError, ValueError):
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else None
+        hint = {
+            400: "check the API key and request configuration",
+            401: "check the API key",
+            403: "check API key permissions and restrictions",
+            404: "check GEMINI_MODEL availability for this key",
+            429: "check Gemini quota and rate limits",
+        }.get(status, "the Gemini service could not complete the request")
+        GEMINI_LOG.warning("Gemini HTTP %s: %s.", status, hint)
+        return None
+    except requests.RequestException:
+        GEMINI_LOG.warning("Gemini connection failed or timed out; retry and check outbound connectivity.")
+        return None
+    except (KeyError, IndexError, TypeError, ValueError):
+        GEMINI_LOG.warning("Gemini returned no usable candidate; check safety filtering or output limits.")
         return None
 
 
@@ -716,6 +750,7 @@ def _safe_gemini_answer(question, history):
     try:
         return _gemini_answer(question, history)
     except Exception:
+        GEMINI_LOG.warning("Gemini answer failed unexpectedly; using local help.")
         return None
 
 
