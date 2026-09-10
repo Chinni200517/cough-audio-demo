@@ -2,10 +2,16 @@
 
 Deploy the repository root to use the current Gemini chatbot in frontend_ui.py.
 In Render > cough-audio-demo > Environment, set GEMINI_API_KEY to your Google AI
-Studio key and GEMINI_MODEL to gemini-2.5-flash, then choose Save and deploy.
+Studio key and GEMINI_MODEL to gemini-2.5-flash-lite, then choose Save and deploy.
 GOOGLE_API_KEY is also accepted when GEMINI_API_KEY is absent. Never commit keys.
 Adding a key name to render.yaml alone does not supply its secret value to an
 existing service created manually.
+
+If the configured model returns HTTP 404, the chatbot now lists models available
+to the same key and retries with up to two stable Flash text models, preferring
+Flash-Lite. It excludes Pro, preview, image and audio models. Discovery is cached
+for five minutes. Authentication and quota errors do not trigger model switching.
+Model discovery reference: https://ai.google.dev/api/models
 
 After the latest code deploys, send a general question to the assistant. If it
 uses local help, check Render Logs for aerova.gemini messages: missing key,
