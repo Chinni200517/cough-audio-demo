@@ -247,7 +247,9 @@ def create_explainability_chart(audio_path, rows, selected_filename):
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     fd, chart_path = tempfile.mkstemp(prefix="aerova-explain-", suffix=".png", dir=RUNTIME_DIR)
     os.close(fd)
+    converted_path = None
     try:
+        y, sr, converted_path = read_audio_samples(audio_path, max_seconds=30)
         fig, axes = plt.subplots(2, 1, figsize=(10, 6), facecolor="#071d2d")
         fig.subplots_adjust(hspace=.42, left=.09, right=.96, top=.92, bottom=.10)
         axes[0].specgram(y, NFFT=1024, Fs=sr, noverlap=768, cmap="magma")
