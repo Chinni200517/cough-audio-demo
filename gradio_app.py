@@ -15,10 +15,14 @@ import soundfile as sf
 from scipy.fft import dct
 from imageio_ffmpeg import get_ffmpeg_exe
 
+from pathlib import Path
+
 from prediction_utils import build_prediction_result
 from frontend_ui import APP_CSS, build_app
 
-ARTIFACT_DIR = os.path.join(os.path.dirname(__file__), "output")
+BASE_DIR = Path(__file__).resolve().parent
+RUNTIME_DIR = BASE_DIR / "runtime"
+ARTIFACT_DIR = os.path.join(str(BASE_DIR), "output")
 PREPROCESSOR_PATH = os.path.join(ARTIFACT_DIR, "preprocessor.joblib")
 N_MFCC = 20
 
