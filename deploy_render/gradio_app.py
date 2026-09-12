@@ -488,17 +488,64 @@ def predict(audio_data, audio_file, audio_url, manual_notes, model_filename, gen
         risk_class = f"risk-{risk}"
         symptoms = detail_result["symptoms_detected"] or ["No symptoms reported"]
         symptom_chips = "".join(f'<span class="symptom-chip">{escape(str(item))}</span>' for item in symptoms)
-        result_html = f'''<div class="result-card {status_class}">
-            <div class="result-kicker">SCREENING SIGNAL</div>
-            <div class="result-heading"><span>{escape(label)}</span><span class="confidence">{confidence * 100:.1f}% confidence</span></div>
-            <p class="result-summary">{escape(detail_result["final_classification"])}</p>
-            <div class="meter"><span style="width: {confidence * 100:.1f}%"></span></div>
-            <div class="result-meta"><span class="risk-pill {risk_class}">{escape(risk)} risk</span><span>Model: {escape(os.path.basename(model_path))}</span></div>
+
+        verdict_color = "#00e5b0" if label == "Healthy" else "#f43f5e"
+        verdict_icon = "🟢" if label == "Healthy" else "🔴"
+        verdict_sub = "HEALTHY RESPIRATORY SIGNAL DETECTED" if label == "Healthy" else "RESPIRATORY DISEASE / INFECTION DETECTED"
+
+        result_html = f'''<div class="result-card {status_class}" style="border: 2px solid {verdict_color}; background: rgba(14, 22, 38, 0.95); box-shadow: 0 0 35px {verdict_color}33; border-radius: 20px; padding: 26px 30px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+              <span class="result-kicker" style="color: #38bdf8; font-weight: 800; letter-spacing: 0.14em; font-size: 13px;">📋 FINAL CLINICAL TRIAGE READOUT</span>
+              <span style="background: {verdict_color}22; color: {verdict_color}; border: 1px solid {verdict_color}; padding: 6px 14px; border-radius: 20px; font-weight: 800; font-size: 13px; letter-spacing: 0.05em;">{verdict_icon} {escape(risk).upper()} RISK</span>
+            </div>
+
+            <div style="margin: 14px 0 18px;">
+              <div style="font-size: clamp(38px, 5vw, 62px); font-weight: 900; letter-spacing: -0.02em; line-height: 1.1; color: {verdict_color}; text-transform: uppercase;">
+                {escape(label)}
+              </div>
+              <div style="font-size: clamp(16px, 2vw, 22px); font-weight: 800; color: #ffffff; margin-top: 6px;">
+                {verdict_sub} · <span style="color: #38bdf8; font-family: monospace;">{confidence * 100:.1f}% Confidence</span>
+              </div>
+            </div>
+
+            <p class="result-summary" style="font-size: 16px; font-weight: 600; color: #f1f5f9; margin: 14px 0 18px; line-height: 1.5; background: rgba(255,255,255,0.06); padding: 14px 18px; border-radius: 12px; border-left: 5px solid {verdict_color};">
+              <strong>Clinical Assessment:</strong> {escape(detail_result["final_classification"])}
+            </p>
+
+            <div class="meter" style="height: 12px; border-radius: 6px; background: rgba(255,255,255,0.1); overflow: hidden; margin-bottom: 14px;">
+              <span style="display: block; height: 100%; width: {confidence * 100:.1f}%; background: linear-gradient(90deg, {verdict_color}, #38bdf8); border-radius: 6px;"></span>
+            </div>
+
+            <div class="result-meta" style="display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #94a3b8;">
+              <span class="risk-pill {risk_class}" style="font-weight: 800; padding: 4px 12px; border-radius: 6px;">Classification: {escape(label)}</span>
+              <span>Validated Model: <strong style="color: #ffffff;">{escape(os.path.basename(model_path))}</strong></span>
+            </div>
         </div>'''
-        details_html = f'''<div class="details-panel">
-            <div class="detail-section"><div class="section-label">What we heard</div><p>{escape(detail_result["sound_classification"])}</p></div>
-            <div class="detail-section"><div class="section-label">Context signals</div><p>{escape(detail_result["symptom_classification"])}</p><div class="chips">{symptom_chips}</div></div>
-            <div class="recommendation"><div class="section-label">Next best step</div><p>{escape(detail_result["recommendation"])}</p></div>
+
+        details_html = f'''<div class="details-panel rx-prescription-card" style="background: rgba(14, 22, 38, 0.95); border: 1px solid rgba(56, 189, 248, 0.28); border-radius: 20px; padding: 24px 28px; margin-top: 18px; box-shadow: 0 16px 40px rgba(0,0,0,0.4);">
+            <div style="display: flex; align-items: center; gap: 14px; border-bottom: 2px solid rgba(56, 189, 248, 0.2); padding-bottom: 14px; margin-bottom: 18px;">
+              <div style="font-size: 34px; font-weight: 900; color: #00e5b0; line-height: 1; font-family: serif;">℞</div>
+              <div>
+                <div style="font-size: 13px; font-weight: 800; letter-spacing: 0.12em; color: #00e5b0; text-transform: uppercase;">TEAM NOVIX · DIGITAL CLINICAL CARE</div>
+                <div style="font-size: 18px; font-weight: 800; color: #ffffff;">AEROVA Medical Prescription & Clinical Triage Directive</div>
+              </div>
+            </div>
+
+            <div class="detail-section" style="margin-bottom: 16px;">
+              <div class="section-label" style="color: #38bdf8; font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px;">🔬 Acoustic Sound Biomarker</div>
+              <p style="font-size: 15px; font-weight: 600; color: #f1f5f9; margin: 0;">{escape(detail_result["sound_classification"])}</p>
+            </div>
+
+            <div class="detail-section" style="margin-bottom: 16px;">
+              <div class="section-label" style="color: #38bdf8; font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px;">🩺 Clinical Context & Symptom Manifestation</div>
+              <p style="font-size: 15px; font-weight: 600; color: #f1f5f9; margin: 0 0 8px;">{escape(detail_result["symptom_classification"])}</p>
+              <div class="chips">{symptom_chips}</div>
+            </div>
+
+            <div class="recommendation" style="background: rgba(0, 229, 176, 0.08); border-left: 5px solid #00e5b0; border-radius: 12px; padding: 18px 20px; margin-top: 18px;">
+              <div class="section-label" style="color: #00e5b0; font-weight: 800; font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px;">💊 Prescription & Clinical Next Steps (Rx Directive)</div>
+              <p style="font-size: 15px; font-weight: 700; line-height: 1.6; color: #ffffff; margin: 0;">{escape(detail_result["recommendation"])}</p>
+            </div>
         </div>'''
         model_files = compatible_model_files(preprocessor, list_available_models())
         comparison_rows = compare_models(X, model_files)

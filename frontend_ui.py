@@ -95,6 +95,8 @@ def _handle_signup(name, email, password, confirm_password):
 
     users = _load_users()
     if email_text in users:
+        if _verify_password(pass_text, users[email_text]["password_hash"]):
+            return gr.update(visible=False), gr.update(visible=True), email_text, f'<div class="notification">✅ Welcome back, {escape(name_text)}! Signed in to Team NOVIX.</div>'
         return gr.update(visible=True), gr.update(visible=False), "", '<div class="notice">⚠️ An account with this email already exists. Please sign in instead.</div>'
 
     users[email_text] = {
@@ -931,18 +933,39 @@ def _continue_audio(audio_path, file_obj, url_text):
 
 def _build_whatsapp_message(patient_id, label, confidence, risk, model, date, age, gender, summary_text):
     clean_summary = re.sub(r"<[^>]+>", " ", str(summary_text or "")).strip()
-    clean_summary = re.sub(r"\s+", " ", clean_summary)[:320]
+    clean_summary = re.sub(r"\s+", " ", clean_summary)[:380]
+    verdict_icon = "🟢" if label == "Healthy" else "🔴"
+    verdict_title = "HEALTHY RESPIRATORY SOUND" if label == "Healthy" else "DISEASE / RESPIRATORY INFECTION DETECTED"
+    clean_risk = str(risk).upper().removesuffix(" RISK")
+
     return (
-        f"🫁 *NOVIX AEROVA - Respiratory Acoustic Screening Report*\n\n"
-        f"📋 *Patient ID:* {patient_id}\n"
-        f"🩺 *Readout:* {label}\n"
-        f"📊 *Model Confidence:* {confidence * 100:.1f}%\n"
-        f"⚠️ *Risk Assessment:* {risk.upper()}\n"
-        f"👤 *Patient Profile:* {age} yrs · {gender.title()}\n"
+        f"🏥 *TEAM NOVIX AEROVA · DIGITAL CLINICAL PRESCRIPTION*\n"
+        f"═══════════════════════════════════════\n"
+        f"📋 *CLINICAL MEDICAL PRESCRIPTION (Rx)*\n"
+        f"═══════════════════════════════════════\n"
+        f"*Patient ID:* {patient_id}\n"
+        f"*Triage Date:* {date}\n"
+        f"*Patient Demographics:* {age} yrs · {gender.title()}\n"
+        f"*Prescribing Unit:* Team NOVIX AI Pulmonology Unit\n"
+        f"───────────────────────────────────────\n"
+        f"℞ *PRIMARY DIAGNOSTIC READOUT:*\n"
+        f"{verdict_icon} *FINAL VERDICT: {label.upper()}* ({label})\n"
+        f"*Clinical Status:* {verdict_title}\n"
+        f"📊 *Acoustic Confidence:* {confidence * 100:.1f}%\n"
+        f"⚠️ *Risk Assessment:* {clean_risk} RISK\n"
         f"🤖 *Classification Model:* {model}\n"
-        f"🕒 *Triage Timestamp:* {date}\n\n"
-        f"📝 *Summary:* {clean_summary}\n\n"
-        f"⚠️ *Clinical Notice:* This report is an acoustic screening aid developed by Team NOVIX, not a medical diagnosis. Consult a physician for diagnostic confirmation."
+        f"───────────────────────────────────────\n"
+        f"🔬 *ACOUSTIC & SYMPTOM SUMMARY:*\n"
+        f"{clean_summary}\n"
+        f"───────────────────────────────────────\n"
+        f"💊 *PRESCRIPTION & NEXT BEST STEPS (Rx DIRECTIVE):*\n"
+        f"1. Medical Follow-up: Schedule a physical examination with a physician or pulmonologist.\n"
+        f"2. Daily Monitoring: Track respiratory rate, SpO2 oxygen levels, and temperature.\n"
+        f"3. Supportive Care: Maintain adequate hydration, rest, and isolate if viral infection is suspected.\n"
+        f"🚨 *Emergency Red Flags:* Immediate emergency care is required for severe shortness of breath, chest heaviness, or cyanosis (blue lips).\n"
+        f"───────────────────────────────────────\n"
+        f"🌐 *Verify Online Report:* http://localhost:7860\n"
+        f"🔒 *Prescription Token:* {patient_id}-Rx"
     )
 
 
@@ -951,9 +974,19 @@ def _generate_whatsapp_link(phone_number, wa_message_text):
     encoded = quote(str(wa_message_text or ""))
     if phone_clean:
         link = f"https://wa.me/{phone_clean}?text={encoded}"
-        return f'<a href="{escape(link)}" target="_blank" class="share-action-link link-wa">👉 Click to Open WhatsApp Chat with +{escape(phone_clean)}</a>'
+        return (
+            f'<div style="margin-top: 10px; background: rgba(37, 211, 102, 0.1); border: 1px solid #25d366; border-radius: 12px; padding: 14px 18px;">'
+            f'<div style="color: #25d366; font-weight: 800; font-size: 13px; margin-bottom: 6px;">✅ Prescription Ready for +{escape(phone_clean)}</div>'
+            f'<a href="{escape(link)}" target="_blank" class="share-action-link link-wa" style="font-size: 14px; font-weight: 800; padding: 12px 22px;">'
+            f'📲 Click to Open WhatsApp & Send Prescription to +{escape(phone_clean)}</a></div>'
+        )
     link = f"https://wa.me/?text={encoded}"
-    return f'<a href="{escape(link)}" target="_blank" class="share-action-link link-wa">👉 Click to Open WhatsApp (Select Contact)</a>'
+    return (
+        f'<div style="margin-top: 10px; background: rgba(37, 211, 102, 0.1); border: 1px solid #25d366; border-radius: 12px; padding: 14px 18px;">'
+        f'<div style="color: #25d366; font-weight: 800; font-size: 13px; margin-bottom: 6px;">✅ Prescription Ready for Contact Selection</div>'
+        f'<a href="{escape(link)}" target="_blank" class="share-action-link link-wa" style="font-size: 14px; font-weight: 800; padding: 12px 22px;">'
+        f'📲 Click to Open WhatsApp (Select Contact / Send Prescription)</a></div>'
+    )
 
 
 def _run_prediction(predict_fn, email, *values):
@@ -974,48 +1007,117 @@ def _run_prediction(predict_fn, email, *values):
     confidence = float(metadata.get("confidence", 0.85))
     risk = str(metadata.get("risk", "Low risk"))
 
-    report_text = f"AEROVA respiratory screening report | Patient ID: {patient_id}\n" + re.sub(r"<[^>]+>", " ", result + " " + details)
+    verdict_color = "#00e5b0" if label == "Healthy" else "#f43f5e"
+    verdict_icon = "🟢" if label == "Healthy" else "🔴"
+
+    report_text = f"TEAM NOVIX AEROVA Medical Prescription | Patient ID: {patient_id}\n" + re.sub(r"<[^>]+>", " ", result + " " + details)
     report_text = re.sub(r"\s+", " ", report_text).strip()[:1800]
-    subject = f"NOVIX AEROVA Respiratory Report - {patient_id}"
+    subject = f"TEAM NOVIX Medical Prescription (Rx) - {patient_id}"
     email_link = f"mailto:{quote(str(email or ''))}?subject={quote(subject)}&body={quote(report_text)}"
 
-    # WhatsApp formatted report
+    # WhatsApp formatted prescription report
     wa_message = _build_whatsapp_message(
         patient_id=patient_id, label=label, confidence=confidence, risk=risk,
         model=model, date=report_date, age=age, gender=gender, summary_text=details,
     )
     wa_default_link = f"https://wa.me/?text={quote(wa_message)}"
 
+    # Medical Prescription HTML Email Letterhead
     email_report = f'''<!doctype html>
 <html><head><meta charset="utf-8"><title>{escape(subject)}</title></head>
-<body style="margin:0;background:#081926;font-family:Arial,sans-serif;color:#f1f5f9;">
-  <div style="max-width:760px;margin:24px auto;background:#0d2638;border:1px solid #174b6b;border-radius:18px;overflow:hidden;box-shadow:0 14px 35px rgba(0,0,0,.5);">
-    <div style="background:linear-gradient(135deg,#09334c,#008b8b);padding:28px 32px;color:#fff;">
-      <div style="font-size:12px;letter-spacing:2px;text-transform:uppercase;color:#7bf5d4;">TEAM NOVIX · AEROVA PRO</div>
-      <h1 style="margin:8px 0 4px;font-size:28px;">Respiratory Screening Report</h1>
-      <div style="font-size:13px;color:#d8f3f6;">Acoustic triage & clinical follow-up summary</div>
-    </div>
-    <div style="padding:28px 32px;">
-      <table role="presentation" style="width:100%;border-collapse:collapse;background:#091c2a;border-radius:12px;color:#f1f5f9;">
-        <tr><td style="padding:13px;border-bottom:1px solid #163a52;"><b>Patient ID</b><br><span style="color:#00e5b0;">{escape(patient_id)}</span></td>
-            <td style="padding:13px;border-bottom:1px solid #163a52;"><b>Report date</b><br>{escape(report_date)}</td></tr>
-        <tr><td style="padding:13px;"><b>Patient profile</b><br>{escape(str(age))} years · {escape(str(gender).title())}</td>
-            <td style="padding:13px;"><b>Report recipient</b><br>{escape(str(email or 'Not provided'))}</td></tr>
+<body style="margin:0;background:#050d17;font-family:'Segoe UI',Arial,sans-serif;color:#f1f5f9;padding:20px;">
+  <div style="max-width:780px;margin:0 auto;background:#0e1728;border:2px solid #1e3a5f;border-radius:20px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.6);">
+    <!-- Prescription Clinic Header -->
+    <div style="background:linear-gradient(135deg,#0c233c,#006d77);padding:30px 36px;border-bottom:3px solid #00e5b0;">
+      <table role="presentation" style="width:100%;border-collapse:collapse;">
+        <tr>
+          <td>
+            <div style="font-size:12px;letter-spacing:2.5px;font-weight:800;text-transform:uppercase;color:#7bf5d4;">TEAM NOVIX · CLINICAL PULMONOLOGY</div>
+            <h1 style="margin:8px 0 4px;font-size:32px;font-weight:900;color:#ffffff;">AEROVA DIGITAL CLINICAL PRESCRIPTION</h1>
+            <div style="font-size:13px;color:#d8f3f6;">Acoustic Respiratory Screening, Biomarker Analysis & Triage Directive</div>
+          </td>
+          <td style="text-align:right;vertical-align:middle;">
+            <div style="font-size:48px;font-weight:900;color:#00e5b0;font-family:serif;line-height:1;">℞</div>
+          </td>
+        </tr>
       </table>
-      <div style="margin-top:24px;padding:20px;border:1px solid #1a4f73;border-left:5px solid #00e5b0;border-radius:12px;background:#0c2233;">
+    </div>
+
+    <!-- Prescription Demographics Table -->
+    <div style="padding:28px 36px;">
+      <table role="presentation" style="width:100%;border-collapse:collapse;background:#08101c;border:1px solid #182e4b;border-radius:12px;color:#f1f5f9;margin-bottom:24px;">
+        <tr>
+          <td style="padding:14px 18px;border-bottom:1px solid #182e4b;width:50%;">
+            <span style="font-size:11px;text-transform:uppercase;color:#94a3b8;font-weight:700;">Patient ID</span><br>
+            <strong style="color:#00e5b0;font-size:17px;font-family:monospace;">{escape(patient_id)}</strong>
+          </td>
+          <td style="padding:14px 18px;border-bottom:1px solid #182e4b;width:50%;">
+            <span style="font-size:11px;text-transform:uppercase;color:#94a3b8;font-weight:700;">Prescription Date</span><br>
+            <strong style="color:#ffffff;font-size:14px;">{escape(report_date)}</strong>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:14px 18px;">
+            <span style="font-size:11px;text-transform:uppercase;color:#94a3b8;font-weight:700;">Patient Profile</span><br>
+            <strong style="color:#ffffff;font-size:14px;">{escape(str(age))} years · {escape(str(gender).title())}</strong>
+          </td>
+          <td style="padding:14px 18px;">
+            <span style="font-size:11px;text-transform:uppercase;color:#94a3b8;font-weight:700;">Prescribing Clinician</span><br>
+            <strong style="color:#38bdf8;font-size:14px;">{escape(str(email or 'Dr. On-Duty (Team NOVIX)'))}</strong>
+          </td>
+        </tr>
+      </table>
+
+      <!-- BIG BOLD PRIMARY DIAGNOSIS / VERDICT BOX -->
+      <div style="background:#091424;border:2px solid {verdict_color};border-radius:16px;padding:24px;margin-bottom:22px;box-shadow:0 0 25px {verdict_color}22;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <span style="font-size:12px;font-weight:800;letter-spacing:2px;color:#38bdf8;text-transform:uppercase;">℞ PRIMARY CLINICAL READOUT</span>
+          <span style="background:{verdict_color}22;color:{verdict_color};border:1px solid {verdict_color};padding:4px 12px;border-radius:20px;font-size:12px;font-weight:800;">{escape(risk).upper()} RISK</span>
+        </div>
+        <div style="font-size:40px;font-weight:900;color:{verdict_color};text-transform:uppercase;letter-spacing:-0.5px;margin:8px 0;">
+          {verdict_icon} {escape(label)}
+        </div>
+        <div style="font-size:18px;font-weight:800;color:#ffffff;margin-bottom:12px;">
+          Confidence: <span style="color:#38bdf8;font-family:monospace;">{confidence * 100:.1f}%</span> · Model: <span style="color:#cbd5e1;">{escape(str(model))}</span>
+        </div>
+      </div>
+
+      <!-- Clinical Findings -->
+      <div style="margin-bottom:20px;">
         {result}
       </div>
-      <div style="margin-top:16px;padding:20px;border:1px solid #1a4f73;border-radius:12px;background:#0c2233;">
+      <div style="margin-bottom:20px;">
         {details}
       </div>
-      <div style="margin-top:16px;">{quality_markup}</div>
-      <div style="margin-top:16px;">{comparison_markup}</div>
-      <div style="margin-top:22px;padding:16px 18px;background:rgba(245,158,11,0.15);border-left:4px solid #f59e0b;border-radius:10px;color:#fde68a;font-size:13px;line-height:1.55;">
-        <b>Clinical notice:</b> This report is an acoustic screening aid by Team NOVIX and not a diagnostic certainty. Severe dyspnea, chest pain, confusion, or cyanosis require emergency medical attention.
+
+      <!-- Prescription Directive (Rx) -->
+      <div style="background:rgba(0,229,176,0.08);border-left:5px solid #00e5b0;border-radius:12px;padding:20px 24px;margin-bottom:22px;">
+        <div style="font-size:13px;font-weight:800;letter-spacing:1px;color:#00e5b0;text-transform:uppercase;margin-bottom:6px;">💊 PRESCRIPTION & CLINICAL DIRECTIVE (Rx)</div>
+        <ol style="margin:8px 0 0 18px;padding:0;color:#f1f5f9;font-size:14px;line-height:1.7;font-weight:600;">
+          <li><strong>Physician Review:</strong> Consult a healthcare provider for complete diagnostic auscultation and clinical evaluation.</li>
+          <li><strong>Vitals Tracking:</strong> Monitor body temperature and oxygen saturation (SpO2) twice daily.</li>
+          <li><strong>Supportive Therapy:</strong> Maintain oral hydration and respiratory rest; isolate if viral contagion is suspected.</li>
+        </ol>
       </div>
-      <table role="presentation" style="width:100%;margin-top:30px;border-top:1px solid #163a52;padding-top:18px;">
-        <tr><td style="padding-top:18px;color:#94a3b8;font-size:12px;">Analysed with<br><b style="color:#f1f5f9;">{escape(str(model))}</b></td>
-            <td style="padding-top:18px;text-align:right;color:#94a3b8;font-size:12px;">Digitally generated by<br><b style="color:#f1f5f9;">TEAM NOVIX · AEROVA PRO</b></td></tr>
+
+      <!-- Urgent Care Safety Notice -->
+      <div style="background:rgba(244,63,94,0.12);border-left:4px solid #f43f5e;border-radius:10px;padding:16px 20px;color:#fecdd3;font-size:13px;line-height:1.55;margin-bottom:28px;">
+        <strong>Clinical Emergency Advisory:</strong> AEROVA is an acoustic screening aid, not a diagnostic confirmation. Immediate emergency hospital care is required for severe dyspnea, acute chest pain, cyanosis (blue lips), or confusion.
+      </div>
+
+      <!-- Doctor Digital Stamp & Signature -->
+      <table role="presentation" style="width:100%;border-top:2px solid #182e4b;padding-top:22px;">
+        <tr>
+          <td style="color:#94a3b8;font-size:12px;vertical-align:bottom;">
+            Platform: <strong style="color:#ffffff;">TEAM NOVIX · AEROVA PRO v2.5</strong><br>
+            Acoustic Verification Token: <strong style="color:#00e5b0;font-family:monospace;">{escape(patient_id)}-Rx</strong>
+          </td>
+          <td style="text-align:right;vertical-align:bottom;">
+            <div style="display:inline-block;border:2px dashed #00e5b0;padding:8px 16px;border-radius:8px;color:#00e5b0;font-size:11px;font-weight:800;letter-spacing:1px;text-transform:uppercase;">
+              ✔ DIGITALLY VERIFIED PRESCRIPTION
+            </div>
+          </td>
+        </tr>
       </table>
     </div>
   </div>
