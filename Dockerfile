@@ -6,6 +6,7 @@ RUN useradd -m -u 1000 appuser
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY --chown=appuser:appuser . .
+RUN mkdir -p /app/runtime && chown -R appuser:appuser /app && chmod -R 777 /app/runtime
 USER appuser
 ENV PYTHONUNBUFFERED=1 GRADIO_ANALYTICS_ENABLED=False
 EXPOSE 7860

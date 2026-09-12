@@ -15,7 +15,28 @@ import qrcode
 
 
 BASE_DIR = Path(__file__).resolve().parent
-RUNTIME_DIR = BASE_DIR / "runtime"
+
+
+def get_runtime_dir() -> Path:
+    """Return a directory guaranteed to be writable across Docker, Render, and local OS."""
+    candidates = [
+        BASE_DIR / "runtime",
+        Path(tempfile.gettempdir()) / "aerova_runtime",
+        Path(tempfile.gettempdir()),
+    ]
+    for cand in candidates:
+        try:
+            cand.mkdir(parents=True, exist_ok=True)
+            test_file = cand / f".perm_check_{os.getpid()}"
+            test_file.touch()
+            test_file.unlink(missing_ok=True)
+            return cand
+        except Exception:
+            continue
+    return Path(tempfile.gettempdir())
+
+
+RUNTIME_DIR = get_runtime_dir()
 HISTORY_PATH = RUNTIME_DIR / "assessment_history.json"
 _HISTORY_LOCK = threading.Lock()
 
@@ -25,27 +46,40 @@ def _plain(html: str) -> str:
 
 
 def save_assessment(entry: dict) -> None:
-    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    target_dir = get_runtime_dir()
+    history_path = target_dir / "assessment_history.json"
     with _HISTORY_LOCK:
         history = []
-        if HISTORY_PATH.exists():
+        if history_path.exists():
             try:
-                history = json.loads(HISTORY_PATH.read_text(encoding="utf-8"))
+                history = json.loads(history_path.read_text(encoding="utf-8"))
             except (OSError, ValueError, TypeError):
                 history = []
         history.insert(0, entry)
-        temp_path = HISTORY_PATH.with_suffix(".tmp")
-        temp_path.write_text(json.dumps(history[:200], indent=2), encoding="utf-8")
-        os.replace(temp_path, HISTORY_PATH)
+        try:
+            temp_path = history_path.with_suffix(".tmp")
+            temp_path.write_text(json.dumps(history[:200], indent=2), encoding="utf-8")
+            os.replace(temp_path, history_path)
+        except (PermissionError, OSError):
+            fallback_path = Path(tempfile.gettempdir()) / "assessment_history.json"
+            temp_path = fallback_path.with_suffix(".tmp")
+            temp_path.write_text(json.dumps(history[:200], indent=2), encoding="utf-8")
+            os.replace(temp_path, fallback_path)
 
 
 def load_history() -> list[dict]:
+    target_dir = get_runtime_dir()
+    history_path = target_dir / "assessment_history.json"
     with _HISTORY_LOCK:
-        try:
-            data = json.loads(HISTORY_PATH.read_text(encoding="utf-8"))
-            return data if isinstance(data, list) else []
-        except (OSError, ValueError, TypeError):
-            return []
+        for path in [history_path, Path(tempfile.gettempdir()) / "assessment_history.json"]:
+            if path.exists():
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                    if isinstance(data, list):
+                        return data
+                except (OSError, ValueError, TypeError):
+                    continue
+        return []
 
 
 def history_dashboard_html(query: str = "") -> str:
@@ -85,12 +119,19 @@ def create_pdf_report(
     import matplotlib.pyplot as plt
     from matplotlib.backends.backend_pdf import PdfPages
 
-    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-    fd, pdf_path = tempfile.mkstemp(prefix=f"aerova-{patient_id.lower()}-", suffix=".pdf", dir=RUNTIME_DIR)
+    target_dir = get_runtime_dir()
+    try:
+        fd, pdf_path = tempfile.mkstemp(prefix=f"aerova-{patient_id.lower()}-", suffix=".pdf", dir=str(target_dir))
+    except (PermissionError, OSError):
+        target_dir = Path(tempfile.gettempdir())
+        fd, pdf_path = tempfile.mkstemp(prefix=f"aerova-{patient_id.lower()}-", suffix=".pdf", dir=str(target_dir))
     os.close(fd)
     verification_text = f"AEROVA report|{patient_id}|{label}|{confidence:.4f}|{datetime.now():%Y-%m-%d}"
     qr = qrcode.make(verification_text)
-    qr_fd, qr_path = tempfile.mkstemp(suffix=".png", dir=RUNTIME_DIR)
+    try:
+        qr_fd, qr_path = tempfile.mkstemp(suffix=".png", dir=str(target_dir))
+    except (PermissionError, OSError):
+        qr_fd, qr_path = tempfile.mkstemp(suffix=".png")
     os.close(qr_fd)
     qr.save(qr_path)
 

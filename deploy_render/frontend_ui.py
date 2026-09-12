@@ -432,6 +432,17 @@ input:focus, textarea:focus, select:focus {
   color: var(--primary) !important;
 }
 
+.share-action-wa {
+  background: rgba(37, 211, 102, 0.15) !important;
+  border-color: #25d366 !important;
+  color: #25d366 !important;
+}
+
+.share-action-wa:hover {
+  background: #25d366 !important;
+  color: #041620 !important;
+}
+
 .safety-alert {
   background: rgba(245, 158, 11, 0.15);
   border-left: 4px solid var(--accent-amber);
@@ -1292,11 +1303,43 @@ def _run_prediction(predict_fn, email, *values):
             })
         except Exception as exc:
             report_notice += f'<div class="notice">History could not be saved: {escape(str(exc))}</div>'
+    label = str(metadata.get("label", "Readout"))
+    risk = str(metadata.get("risk", "unknown"))
+    conf_val = float(metadata.get("confidence", 0))
+    conf_pct = conf_val * 100
+
+    wa_message = (
+        f"🩺 *AEROVA CLINICAL SCREENING REPORT*\n"
+        f"📋 Patient ID: {patient_id}\n"
+        f"📅 Date: {report_date}\n"
+        f"👤 Profile: {age} yrs · {str(gender).title()}\n"
+        f"🔍 Readout: *{label}*\n"
+        f"⚠️ Risk Level: *{str(risk).title()}*\n"
+        f"🎯 Confidence: *{conf_pct:.1f}%*\n"
+        f"🧠 Model: {model}\n\n"
+        f"ℹ️ Screening aid only. Consult a healthcare professional for clinical diagnosis."
+    )
+    wa_link = f"https://api.whatsapp.com/send?text={quote(wa_message)}"
+
     share_html = f'''<div class="share-actions">
+        <a class="share-action share-action-wa" href="{escape(wa_link)}" target="_blank" rel="noopener noreferrer">💬 Share via WhatsApp</a>
         <a class="share-action" href="{escape(email_link)}">✉️ Open email draft</a>
         <a class="share-action" href="{escape(eml_link)}" download="aerova-{escape(patient_id.lower())}.eml">📥 Download email file (.eml)</a>
         <a class="share-action" href="{escape(html_link)}" download="aerova-{escape(patient_id.lower())}.html">🌐 Download screening report</a>
       </div><p class="notification"><b>Report {escape(patient_id)}</b> is ready for {escape(str(email))}.</p>{report_notice}'''
+
+    report_meta = {
+        "patient_id": patient_id,
+        "date": report_date,
+        "age": age,
+        "gender": str(gender),
+        "model": model,
+        "label": label,
+        "risk": risk,
+        "confidence": conf_pct,
+        "report_text": report_text,
+    }
+
     if not extended:
         return (
             result,
@@ -1308,11 +1351,75 @@ def _run_prediction(predict_fn, email, *values):
             history_dashboard_html(),
             gr.update(visible=False),
             gr.update(visible=True),
+            report_meta,
+            str(email or ""),
         )
     return (
         result, details + share_html, quality_markup, chart_path, comparison_markup,
         pdf_path, history_dashboard_html(), gr.update(visible=False), gr.update(visible=True),
+        report_meta, str(email or ""),
     )
+
+
+def _dispatch_whatsapp(phone: str, meta: dict) -> str:
+    if not meta or not meta.get("patient_id"):
+        return '<div class="notice" style="color: #f59e0b; margin-top: 8px;">Please run a screening prediction first to generate the clinical report.</div>'
+
+    clean_digits = re.sub(r"[^\d]", "", str(phone or ""))
+    patient_id = meta.get("patient_id", "AUR-PATIENT")
+    date = meta.get("date", "")
+    age = meta.get("age", "Not provided")
+    gender = meta.get("gender", "unknown")
+    label = meta.get("label", "Readout")
+    risk = meta.get("risk", "unknown")
+    conf = float(meta.get("confidence", 0))
+    model = meta.get("model", "AEROVA Extra Trees")
+
+    wa_text = (
+        f"🩺 *AEROVA CLINICAL SCREENING REPORT*\n"
+        f"📋 Patient ID: {patient_id}\n"
+        f"📅 Date: {date}\n"
+        f"👤 Profile: {age} yrs · {str(gender).title()}\n"
+        f"🔍 Readout: *{label}*\n"
+        f"⚠️ Risk Level: *{str(risk).title()}*\n"
+        f"🎯 Confidence: *{conf:.1f}%*\n"
+        f"🧠 Model: {model}\n\n"
+        f"ℹ️ Acoustic screening aid. Consult medical professional for diagnosis."
+    )
+    if clean_digits:
+        wa_url = f"https://api.whatsapp.com/send?phone={clean_digits}&text={quote(wa_text)}"
+        target_display = f"for +{clean_digits}"
+    else:
+        wa_url = f"https://api.whatsapp.com/send?text={quote(wa_text)}"
+        target_display = "(no specific number entered - share to any contact)"
+
+    return f'''<div style="background: rgba(16, 185, 129, 0.14); border: 1px solid #10b981; border-radius: 10px; padding: 14px 18px; margin-top: 12px;">
+        <div style="color: #10b981; font-weight: 700; font-size: 14px; margin-bottom: 4px;">✅ WhatsApp Report Dispatch Ready {target_display}</div>
+        <p style="color: #cbd5e1; font-size: 13px; margin: 0 0 12px 0;">Click the button below to launch WhatsApp with the complete pre-filled assessment report:</p>
+        <a href="{escape(wa_url)}" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 8px; background: #25d366; color: #041620; font-weight: 700; padding: 10px 20px; border-radius: 8px; text-decoration: none; box-shadow: 0 4px 14px rgba(37,211,102,0.35);">
+          <span>💬</span> <span>Open in WhatsApp & Send Report →</span>
+        </a>
+    </div>'''
+
+
+def _dispatch_email(target_email: str, meta: dict) -> str:
+    if not meta or not meta.get("patient_id"):
+        return '<div class="notice" style="color: #f59e0b; margin-top: 8px;">Please run a screening prediction first to generate the clinical report.</div>'
+
+    target_email = str(target_email or "").strip()
+    patient_id = meta.get("patient_id", "AUR-PATIENT")
+    subject = f"AEROVA Respiratory Report - {patient_id}"
+    body = meta.get("report_text", "")
+    mailto_url = f"mailto:{quote(target_email)}?subject={quote(subject)}&body={quote(body)}"
+
+    target_display = f"to <b>{escape(target_email)}</b>" if target_email else "(default mail app)"
+    return f'''<div style="background: rgba(56, 189, 248, 0.14); border: 1px solid #38bdf8; border-radius: 10px; padding: 14px 18px; margin-top: 12px;">
+        <div style="color: #38bdf8; font-weight: 700; font-size: 14px; margin-bottom: 4px;">✅ Email Report Draft Ready {target_display}</div>
+        <p style="color: #cbd5e1; font-size: 13px; margin: 0 0 12px 0;">Click the button below to launch your email client with the clinical triage summary:</p>
+        <a href="{escape(mailto_url)}" style="display: inline-flex; align-items: center; gap: 8px; background: #38bdf8; color: #041620; font-weight: 700; padding: 10px 20px; border-radius: 8px; text-decoration: none; box-shadow: 0 4px 14px rgba(56,189,248,0.35);">
+          <span>✉️</span> <span>Open Email Draft & Send →</span>
+        </a>
+    </div>'''
 
 
 def build_app(predict_fn, model_files, default_model):
@@ -1421,6 +1528,32 @@ def build_app(predict_fn, model_files, default_model):
                 with gr.Accordion("🧠 Machine Learning Model Comparison", open=False):
                     model_comparison_output = gr.HTML()
                 pdf_report = gr.File(label="Download Verified PDF Medical Report (with QR Authentication)", interactive=False)
+                with gr.Group(elem_classes=["panel-subtle"]):
+                    gr.HTML('''
+                    <div style="background: rgba(11, 31, 46, 0.95); border: 1px solid #174b6b; border-radius: 12px; padding: 16px 20px; margin: 18px 0 12px;">
+                      <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 4px;">
+                        <span style="font-size: 20px;">📤</span>
+                        <h3 style="margin: 0; color: #38bdf8; font-size: 16px; font-weight: 700;">Multi-Channel Report Dispatch · WhatsApp & Email</h3>
+                      </div>
+                      <p style="margin: 0; color: #94a3b8; font-size: 13px;">Dispatch this official screening readout directly to a patient or doctor\'s WhatsApp phone number or email inbox.</p>
+                    </div>
+                    ''')
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            dispatch_phone = gr.Textbox(
+                                label="📲 Recipient WhatsApp Number",
+                                placeholder="e.g. +91 98765 43210 or 15551234567 (with country code)",
+                                lines=1,
+                            )
+                            dispatch_wa_btn = gr.Button("💬 Send / Open in WhatsApp", variant="primary", elem_classes=["primary-button"])
+                        with gr.Column(scale=1):
+                            dispatch_email = gr.Textbox(
+                                label="✉️ Recipient Email Address",
+                                placeholder="e.g. doctor@clinic.org or patient@mail.com",
+                                lines=1,
+                            )
+                            dispatch_email_btn = gr.Button("✉️ Send / Open Email Draft", elem_classes=["secondary-button"])
+                    dispatch_status = gr.HTML()
                 with gr.Row(elem_classes=["result-actions"]):
                     back_result = gr.Button("← Modify Context", elem_classes=["secondary-button"])
                     new_assessment = gr.Button("Start New Assessment", elem_classes=["secondary-button"])
@@ -1481,6 +1614,9 @@ def build_app(predict_fn, model_files, default_model):
                     chat_input = gr.Textbox(label="Message Robot", placeholder="Ask anything about cough screening, models, features...", scale=4)
                     chat_send = gr.Button("Ask Robot", variant="primary", elem_classes=["primary-button"], scale=1)
 
+        # Dispatch and report state tracking
+        report_meta_state = gr.State({})
+
         # Login event bindings
         login_button.click(
             _demo_login,
@@ -1514,15 +1650,19 @@ def build_app(predict_fn, model_files, default_model):
         back_audio.click(lambda: (gr.update(visible=True), gr.update(visible=False)), outputs=[audio_step, context_step])
         back_result.click(lambda: (gr.update(visible=False), gr.update(visible=True)), outputs=[result_step, context_step])
         new_assessment.click(
-            lambda: (gr.update(visible=False), gr.update(visible=True), gr.update(visible=False), "", ""),
-            outputs=[result_step, audio_step, context_step, prediction_output, details_output],
+            lambda: (gr.update(visible=False), gr.update(visible=True), gr.update(visible=False), "", "", "", ""),
+            outputs=[result_step, audio_step, context_step, prediction_output, details_output, dispatch_status, dispatch_phone],
         )
 
         # Generate prediction
         predict_button.click(
             lambda email, *values: _run_prediction(predict_fn, email, *values),
             inputs=[login_email_state, audio_input, file_input, url_input, manual_notes, model_choice, gender, age, cough_detected, respiratory_condition, fever_muscle_pain],
-            outputs=[prediction_output, details_output, quality_output, explanation_chart, model_comparison_output, pdf_report, history_output, context_step, result_step],
+            outputs=[prediction_output, details_output, quality_output, explanation_chart, model_comparison_output, pdf_report, history_output, context_step, result_step, report_meta_state, dispatch_email],
         )
+
+        # Multi-channel report dispatching
+        dispatch_wa_btn.click(_dispatch_whatsapp, [dispatch_phone, report_meta_state], [dispatch_status])
+        dispatch_email_btn.click(_dispatch_email, [dispatch_email, report_meta_state], [dispatch_status])
 
     return interface

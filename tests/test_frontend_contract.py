@@ -73,5 +73,25 @@ class FrontendContractTests(unittest.TestCase):
                 self.assertIn(expected.lower(), history[-1]["content"].lower())
 
 
+    def test_whatsapp_and_email_dispatch(self):
+        from frontend_ui import _dispatch_whatsapp, _dispatch_email
+        meta = {
+            "patient_id": "AUR-2026-TEST",
+            "date": "12 September 2026",
+            "label": "Healthy",
+            "risk": "low",
+            "confidence": 92.5,
+            "report_text": "Sample report summary",
+        }
+        wa_result = _dispatch_whatsapp("+91 98765 43210", meta)
+        self.assertIn("api.whatsapp.com/send", wa_result)
+        self.assertIn("919876543210", wa_result)
+        self.assertIn("AUR-2026-TEST", wa_result)
+
+        email_result = _dispatch_email("doctor@hospital.org", meta)
+        self.assertIn("mailto:doctor%40hospital.org", email_result)
+        self.assertIn("AUR-2026-TEST", email_result)
+
+
 if __name__ == "__main__":
     unittest.main()
