@@ -241,7 +241,7 @@ def create_explainability_chart(audio_path, rows, selected_filename):
     import matplotlib.pyplot as plt
 
     y, sr, converted_path = read_audio_samples(audio_path, max_seconds=30)
-    fd, chart_path = tempfile.mkstemp(prefix="auralis-explain-", suffix=".png")
+    fd, chart_path = tempfile.mkstemp(prefix="aerova-explain-", suffix=".png")
     os.close(fd)
     try:
         fig, axes = plt.subplots(2, 1, figsize=(10, 6), facecolor="#071d2d")

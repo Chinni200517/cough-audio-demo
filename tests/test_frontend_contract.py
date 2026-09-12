@@ -57,6 +57,21 @@ class FrontendContractTests(unittest.TestCase):
             post.call_args.kwargs["json"]["systemInstruction"]["parts"][0]["text"],
         )
 
+    @patch.dict("os.environ", {}, clear=True)
+    def test_chat_answers_common_project_questions_without_gemini(self):
+        cases = {
+            "What file formats can I upload?": "WAV",
+            "How does AEROVA work?": "Sign in",
+            "Is this a diagnosis?": "cannot diagnose",
+            "What does the confidence score mean?": "not the probability",
+            "Who made this project?": "Chinni200517",
+        }
+        for question, expected in cases.items():
+            with self.subTest(question=question):
+                history, cleared = _chat_response(question, [])
+                self.assertEqual(cleared, "")
+                self.assertIn(expected.lower(), history[-1]["content"].lower())
+
 
 if __name__ == "__main__":
     unittest.main()
