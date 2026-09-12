@@ -1399,6 +1399,8 @@ def build_app(predict_fn, model_files, default_model):
             with gr.Column(elem_classes=["panel-card"]) as audio_step:
                 gr.HTML('<h2 class="panel-title">1. Cough Audio Intake</h2><p class="panel-sub">Record or upload a 2–6 second cough in a quiet room for high acoustic resolution.</p>')
                 audio_input = gr.Audio(type="filepath", sources=["upload", "microphone"], label="Record via Microphone or Upload Audio", elem_classes=["audio-box"])
+                with gr.Row():
+                    load_sample_btn = gr.Button("🎧 Load Sample Cough Audio (1-Click Demo)", elem_classes=["secondary-button"])
                 file_input = gr.File(file_count="single", label="Or Choose an Audio File (.wav, .mp3, .webm, .ogg)")
                 url_input = gr.Textbox(label="Or Paste Direct Audio URL", placeholder="https://example.com/cough_sample.wav")
                 audio_notice = gr.HTML()
@@ -1571,6 +1573,13 @@ def build_app(predict_fn, model_files, default_model):
         history_refresh.click(history_dashboard_html, [history_search], [history_output])
 
         # Screening flow navigation
+        load_sample_btn.click(
+            lambda: (
+                "run_results/deployment_test_tone.wav",
+                '<div class="notification" style="background: rgba(0, 229, 176, 0.12); border: 1px solid #00e5b0; color: #00e5b0; padding: 10px 14px; border-radius: 8px; margin-top: 10px;">✅ Sample cough recording loaded successfully! Click <b>"Continue to Clinical Context →"</b> below to proceed.</div>',
+            ),
+            outputs=[audio_input, audio_notice],
+        )
         continue_audio.click(_continue_audio, [audio_input, file_input, url_input], [audio_step, context_step, audio_notice])
         back_audio.click(lambda: (gr.update(visible=True), gr.update(visible=False)), outputs=[audio_step, context_step])
         back_result.click(lambda: (gr.update(visible=False), gr.update(visible=True)), outputs=[result_step, context_step])

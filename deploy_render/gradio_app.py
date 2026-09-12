@@ -240,20 +240,23 @@ def create_explainability_chart(audio_path, rows, selected_filename):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    y, sr, converted_path = read_audio_samples(audio_path, max_seconds=30)
-    fd, chart_path = tempfile.mkstemp(prefix="aerova-explain-", suffix=".png")
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    fd, chart_path = tempfile.mkstemp(prefix="aerova-explain-", suffix=".png", dir=RUNTIME_DIR)
     os.close(fd)
     try:
         fig, axes = plt.subplots(2, 1, figsize=(10, 6), facecolor="#071d2d")
         fig.subplots_adjust(hspace=.42, left=.09, right=.96, top=.92, bottom=.10)
         axes[0].specgram(y, NFFT=1024, Fs=sr, noverlap=768, cmap="magma")
         axes[0].set(title="Cough frequency spectrogram", xlabel="Time (seconds)", ylabel="Frequency (Hz)")
-        selected = next((row for row in rows if row["filename"] == selected_filename), rows[0])
-        values = [1 - selected["disease_probability"], selected["disease_probability"]]
-        bars = axes[1].barh(["Healthy", "Disease"], values, color=["#61d8b0", "#ff806f"])
-        axes[1].set_xlim(0, 1); axes[1].set_xlabel("Model probability"); axes[1].set_title(f"Confidence explanation · {selected['model']}")
-        for bar, value in zip(bars, values):
-            axes[1].text(min(value + .02, .92), bar.get_y() + bar.get_height()/2, f"{value*100:.1f}%", va="center", color="white", weight="bold")
+        selected = next((row for row in rows if row.get("filename") == selected_filename), rows[0] if rows else None)
+        if selected:
+            values = [1 - selected["disease_probability"], selected["disease_probability"]]
+            bars = axes[1].barh(["Healthy", "Disease"], values, color=["#61d8b0", "#ff806f"])
+            axes[1].set_xlim(0, 1); axes[1].set_xlabel("Model probability"); axes[1].set_title(f"Confidence explanation · {selected['model']}")
+            for bar, value in zip(bars, values):
+                axes[1].text(min(value + .02, .92), bar.get_y() + bar.get_height()/2, f"{value*100:.1f}%", va="center", color="white", weight="bold")
+        else:
+            axes[1].axis("off")
         for ax in axes:
             ax.set_facecolor("#102d3c"); ax.tick_params(colors="#d9edf4"); ax.title.set_color("white"); ax.xaxis.label.set_color("#b8d2dc"); ax.yaxis.label.set_color("#b8d2dc")
             for spine in ax.spines.values(): spine.set_color("#416274")
@@ -611,7 +614,12 @@ def main():
         "share": args.share,
         "show_error": True,
         "theme": gr.themes.Base(),
-        "css": APP_CSS,
+        "allowed_paths": [
+            str(BASE_DIR),
+            str(RUNTIME_DIR),
+            str(ARTIFACT_DIR),
+            tempfile.gettempdir(),
+        ],
     }
     try:
         iface.launch(**launch_options)

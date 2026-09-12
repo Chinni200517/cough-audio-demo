@@ -21,7 +21,9 @@ _HISTORY_LOCK = threading.Lock()
 
 
 def _plain(html: str) -> str:
-    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", str(html or ""))).strip()
+    cleaned = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", str(html or ""))).strip()
+    return re.sub(r"[^\x00-\x7F]+", " ", cleaned).strip()
+
 
 
 def save_assessment(entry: dict) -> None:
@@ -105,9 +107,12 @@ def create_pdf_report(
         ax.text(.06, .765, f"Age: {age} years    Gender: {str(gender).title()}    Recipient: {email}", fontsize=10)
         ax.add_patch(plt.Rectangle((.06, .58), .88, .14, facecolor="#eaf6f8", edgecolor="#9bcbd4"))
         ax.text(.09, .68, "SCREENING READOUT", fontsize=9, weight="bold", color="#18788c")
-        ax.text(.09, .625, label, fontsize=25, weight="bold", color="#153448")
+        clean_label = re.sub(r"[^\x00-\x7F]+", "", str(label or "")).strip() or "Readout"
+        clean_risk = re.sub(r"[^\x00-\x7F]+", "", str(risk or "")).strip()
+        clean_model = re.sub(r"[^\x00-\x7F]+", "", str(model or "")).strip()
+        ax.text(.09, .625, clean_label, fontsize=25, weight="bold", color="#153448")
         ax.text(.66, .63, f"{confidence * 100:.1f}% confidence", fontsize=12, weight="bold", color="#18788c")
-        ax.text(.09, .59, f"Risk level: {str(risk).upper()}    Model: {model}", fontsize=10)
+        ax.text(.09, .59, f"Risk level: {clean_risk.upper()}    Model: {clean_model}", fontsize=10)
         ax.text(.06, .535, "Clinical summary", fontsize=12, weight="bold", color="#153448")
         ax.text(.06, .49, _plain(result_html + " " + details_html)[:850], fontsize=9, wrap=True, va="top", linespacing=1.5)
         ax.text(.06, .25, "Recording quality", fontsize=12, weight="bold")
@@ -137,7 +142,12 @@ def create_pdf_report(
             ax.text(0, 1.04, "Explainability and model comparison", transform=ax.transAxes, fontsize=19, weight="bold", color="#153448")
             ax.imshow(mpimg.imread(chart_path)); ax.set_aspect("auto")
             rows = comparison[:9]
-            table_text = "\n".join(f"{row['model']}: {row['label']} ({row['confidence'] * 100:.1f}%)" for row in rows)
+            table_text = "\n".join(
+                f"{re.sub(r'[^\\x00-\\x7F]+', '', str(row.get('model', '')))}: "
+                f"{re.sub(r'[^\\x00-\\x7F]+', '', str(row.get('label', '')))} "
+                f"({float(row.get('confidence', 0)) * 100:.1f}%)"
+                for row in rows
+            )
             ax.text(0, -.05, table_text, transform=ax.transAxes, fontsize=8, va="top")
             pdf.savefig(fig, bbox_inches="tight"); plt.close(fig)
     try:
