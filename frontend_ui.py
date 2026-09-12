@@ -8,6 +8,7 @@ import re
 import secrets
 import hashlib
 import json
+import base64
 from pathlib import Path
 from urllib.parse import quote
 
@@ -16,8 +17,11 @@ import requests
 
 from reporting import create_pdf_report, history_dashboard_html, save_assessment, send_prescription_email
 
-RUNTIME_DIR = Path(__file__).resolve().parent / "runtime"
+BASE_DIR = Path(__file__).resolve().parent
+RUNTIME_DIR = BASE_DIR / "runtime"
 USERS_PATH = RUNTIME_DIR / "users.json"
+ASSETS_DIR = BASE_DIR / "assets"
+BANNER_PATH = ASSETS_DIR / "banner.jpg"
 
 # Global active key store (allows setting via UI, environment, or .env)
 ACTIVE_GEMINI_KEY = (
@@ -25,163 +29,334 @@ ACTIVE_GEMINI_KEY = (
     or os.environ.get("GOOGLE_API_KEY", "").strip()
 )
 
+
+def _get_banner_base64() -> str:
+    if BANNER_PATH.exists():
+        try:
+            with open(BANNER_PATH, "rb") as f:
+                return base64.b64encode(f.read()).decode("utf-8")
+        except Exception:
+            return ""
+    return ""
+
+
 APP_CSS = """
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800;900&display=swap');
+
 :root {
-  --bg: #071b24;
-  --bg-strong: #0b3440;
-  --panel: rgba(10, 35, 43, 0.94);
-  --panel-soft: rgba(15, 58, 63, 0.9);
-  --ink: #f4fbf8;
-  --muted: #bfd5d2;
-  --primary: #20b7a5;
-  --primary-deep: #087f78;
-  --secondary: #a9f0d5;
-  --accent: #f17c55;
-  --success: #1a9b68;
-  --warning: #bd7810;
-  --line: rgba(170, 228, 215, 0.3);
-  --shadow: 0 22px 50px rgba(5, 17, 29, 0.45);
+  --bg-gradient: linear-gradient(135deg, #f0f7fd 0%, #e0effe 45%, #f8fafc 100%);
+  --panel-bg: #ffffff;
+  --navy-title: #0a2540;
+  --navy-deep: #0f3b60;
+  --blue-primary: #0077b6;
+  --blue-vibrant: #0096c7;
+  --blue-light: #e0f2fe;
+  --cyan-accent: #00b4d8;
+  --cyan-soft: #f0f9ff;
+  --green-mint: #10b981;
+  --text-main: #1e293b;
+  --text-muted: #64748b;
+  --shadow-lux: 0 20px 45px rgba(2, 62, 138, 0.08), 0 4px 12px rgba(2, 62, 138, 0.04);
+  --shadow-card: 0 10px 30px rgba(10, 37, 64, 0.06);
 }
 
 body, .gradio-container {
-  background: radial-gradient(circle at top left, #15505a 0%, #092c35 38%, #06171e 100%) !important;
-  color: var(--ink) !important;
-  font-family: 'Segoe UI', Arial, sans-serif !important;
+  background: radial-gradient(circle at 10% 10%, #e0f2fe 0%, #f0f9ff 45%, #f8fafc 100%) !important;
+  color: var(--text-main) !important;
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif !important;
+  line-height: 1.5;
 }
 
 .gradio-container {
   max-width: 1280px !important;
   margin: auto;
-  padding: 24px 18px 40px !important;
+  padding: 20px 18px 40px !important;
 }
 
 .gradio-container .block {
-  border-radius: 22px !important;
+  border-radius: 20px !important;
 }
 
-.hero {
-  padding: 28px 30px 20px;
-  border: 1px solid var(--line);
-  background: linear-gradient(135deg, rgba(18,58,80,0.94) 0%, rgba(11,89,109,0.92) 45%, rgba(23,128,150,0.9) 100%);
-  border-radius: 24px;
-  color: white;
-  box-shadow: var(--shadow);
+/* =========================================================================
+   TEXT VISIBILITY & HIGH CONTRAST (Crisp Blue Medical Theme)
+   ========================================================================= */
+label, label span, .gr-input-label, .block-title {
+  color: var(--navy-title) !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.01em;
 }
 
-.hero-hospital {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  min-height: 170px;
+input, textarea, select {
+  background-color: #ffffff !important;
+  color: var(--navy-title) !important;
+  border: 1.5px solid #cbd5e1 !important;
+  border-radius: 12px !important;
+  padding: 10px 14px !important;
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  transition: all 0.2s ease;
 }
 
-.hero-left {
-  max-width: 68%;
+input:focus, textarea:focus, select:focus {
+  border-color: var(--blue-vibrant) !important;
+  box-shadow: 0 0 0 3px rgba(0, 150, 199, 0.15) !important;
 }
 
-.hero-right {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  align-items: flex-end;
+.primary-button {
+  background: linear-gradient(135deg, #0077b6 0%, #0096c7 100%) !important;
+  color: #ffffff !important;
+  border: 0 !important;
+  border-radius: 14px !important;
+  font-weight: 800 !important;
+  font-size: 15px !important;
+  box-shadow: 0 10px 25px rgba(0, 119, 182, 0.25) !important;
+  cursor: pointer;
+  transition: all 0.2s ease;
 }
 
-.eyebrow, .section-label, .result-kicker {
-  color: #bfeaf2;
-  font: 700 11px/1.2 Arial, sans-serif;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+.primary-button:hover {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
 }
 
-.hero h1 {
-  margin: 12px 0 8px;
-  font-size: clamp(28px, 4vw, 52px);
-  line-height: 1.02;
-  font-weight: 700;
-  letter-spacing: -0.04em;
+.secondary-button {
+  border: 1.5px solid #bae6fd !important;
+  color: #0284c7 !important;
+  border-radius: 14px !important;
+  background: #f0f9ff !important;
+  font-weight: 700 !important;
+  cursor: pointer;
 }
 
-.hero p {
-  max-width: 640px;
-  color: rgba(255, 255, 255, 0.82);
-  font: 16px/1.6 Arial, sans-serif;
-  margin: 0;
+.secondary-button:hover {
+  background: #e0f2fe !important;
 }
 
-.brand-banner {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 999px;
-  padding: 8px 14px;
-  backdrop-filter: blur(6px);
+.demo-fast-btn {
+  background: linear-gradient(135deg, #0284c7 0%, #0077b6 100%) !important;
+  color: #ffffff !important;
+  font-weight: 800 !important;
+  font-size: 16px !important;
+  border-radius: 14px !important;
+  padding: 15px 24px !important;
+  box-shadow: 0 12px 30px rgba(2, 132, 199, 0.3) !important;
+  border: none !important;
+  cursor: pointer;
+  width: 100%;
 }
 
-.brand-mark {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: linear-gradient(135deg, #9fe9ff, #69c6d2);
-  color: #073d4b;
-  font-weight: 800;
-  box-shadow: inset 0 2px 10px rgba(255,255,255,.4);
+.demo-fast-btn:hover {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
 }
 
-.status-badges {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.portal-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  background: rgba(7, 19, 28, 0.38);
-  border: 1px solid rgba(148, 196, 220, 0.22);
-  color: white;
-  border-radius: 999px;
-  padding: 8px 12px;
-  font: 700 11px Arial, sans-serif;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.portal-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #9ae9d1;
-  box-shadow: 0 0 10px rgba(154, 233, 209, 0.9);
-}
-
+/* =========================================================================
+   PANELS & CARDS
+   ========================================================================= */
 .panel {
-  background: rgba(12, 27, 38, 0.88);
-  border: 1px solid var(--line);
-  border-radius: 20px;
-  padding: 24px;
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(2px);
+  background: #ffffff !important;
+  border: 1.5px solid rgba(2, 132, 199, 0.16) !important;
+  border-radius: 22px !important;
+  padding: 26px 30px !important;
+  box-shadow: var(--shadow-lux) !important;
   margin-top: 14px;
 }
 
 .panel-title {
-  font-size: 26px;
-  font-weight: 700;
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--navy-title);
   margin: 0 0 4px;
-  color: var(--ink);
+  letter-spacing: -0.02em;
 }
 
 .panel-copy {
-  color: var(--muted);
-  font: 13px/1.5 Arial, sans-serif;
-  margin: 0 0 16px;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 0 0 18px;
+}
+
+/* =========================================================================
+   POSTER SHOWCASE & COMPANY NAME HERO
+   ========================================================================= */
+.poster-hero-card {
+  background: linear-gradient(135deg, #ffffff 0%, #f0f9ff 100%);
+  border: 2px solid rgba(0, 150, 199, 0.25);
+  border-radius: 24px;
+  padding: 30px 34px;
+  box-shadow: var(--shadow-lux);
+  margin-bottom: 24px;
+}
+
+.poster-top-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+.project-kicker {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #0284c7;
+  margin-bottom: 6px;
+}
+
+.project-brand-title {
+  font-size: clamp(38px, 5.5vw, 62px);
+  font-weight: 900;
+  line-height: 1.0;
+  letter-spacing: -0.03em;
+  color: var(--navy-title);
+  margin: 0 0 6px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.project-brand-tagline {
+  font-size: clamp(17px, 2.2vw, 24px);
+  font-weight: 700;
+  color: #0077b6;
+  margin: 0 0 14px;
+}
+
+.team-novix-box {
+  background: #ffffff;
+  border: 2.5px solid #0096c7;
+  border-radius: 20px;
+  padding: 20px 28px;
+  box-shadow: 0 12px 30px rgba(0, 150, 199, 0.14);
+  text-align: center;
+}
+
+.team-novix-label {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #0284c7;
+  margin-bottom: 2px;
+}
+
+.team-novix-title {
+  font-size: clamp(40px, 5vw, 54px);
+  font-weight: 900;
+  color: var(--navy-title);
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+/* Three Pillars Feature Grid from Poster */
+.poster-pillars-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin: 24px 0 20px;
+}
+
+.pillar-card {
+  background: #ffffff;
+  border: 1.5px solid rgba(2, 132, 199, 0.18);
+  border-radius: 18px;
+  padding: 22px 20px;
+  box-shadow: var(--shadow-card);
+  transition: all 0.2s ease;
+}
+
+.pillar-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 30px rgba(2, 62, 138, 0.1);
+  border-color: #0096c7;
+}
+
+.pillar-icon-wrap {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #0096c7, #0077b6);
+  color: #ffffff;
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  margin-bottom: 14px;
+  box-shadow: 0 8px 20px rgba(0, 119, 182, 0.25);
+}
+
+.pillar-title {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--navy-title);
+  margin-bottom: 6px;
+}
+
+.pillar-desc {
+  font-size: 13.5px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* Team Members Footer Bar from Poster */
+.team-members-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 14px;
+  background: linear-gradient(135deg, #e0f2fe 0%, #f0f9ff 100%);
+  border: 1.5px solid rgba(2, 132, 199, 0.22);
+  border-radius: 16px;
+  padding: 14px 22px;
+  margin-top: 20px;
+}
+
+.members-tag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #0077b6;
+}
+
+.member-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--navy-title);
+}
+
+.member-roll {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #0284c7;
+  background: #ffffff;
+  padding: 3px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(2, 132, 199, 0.25);
+}
+
+/* =========================================================================
+   LOGIN PANEL
+   ========================================================================= */
+.login-panel {
+  max-width: 600px;
+  margin: 20px auto 40px;
+  padding: 36px 34px;
+  background: #ffffff;
+  border: 2px solid rgba(0, 150, 199, 0.28);
+  border-radius: 24px;
+  box-shadow: 0 20px 50px rgba(0, 119, 182, 0.12);
 }
 
 .dashboard-metrics {
@@ -192,140 +367,156 @@ body, .gradio-container {
 }
 
 .metric-item {
-  background: rgba(148, 196, 220, 0.08);
-  border: 1px solid rgba(148, 196, 220, 0.18);
+  background: #f0f9ff;
+  border: 1.5px solid rgba(2, 132, 199, 0.2);
   border-radius: 16px;
   padding: 14px 12px;
+  text-align: center;
 }
 
 .metric-label {
   display: block;
-  font: 700 10px Arial, sans-serif;
-  color: var(--muted);
+  font: 800 10px 'Plus Jakarta Sans', sans-serif;
+  color: #0284c7;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .metric-value {
   display: block;
-  margin-top: 8px;
-  font: 700 24px/1 Arial, sans-serif;
-  color: var(--ink);
+  margin-top: 6px;
+  font: 800 24px/1 'Plus Jakarta Sans', sans-serif;
+  color: var(--navy-title);
 }
 
 .metric-trend {
   display: inline-block;
-  margin-top: 8px;
+  margin-top: 6px;
   font: 700 11px Arial, sans-serif;
-  color: var(--success);
+  color: #10b981;
 }
 
-.audio-box {
-  border: 1px dashed #8ec6d4;
-  background: linear-gradient(180deg, #f1fbff 0%, #edf8f7 100%);
-  border-radius: 16px;
-  padding: 6px;
+/* =========================================================================
+   HERO HEADER & PROGRESS WIZARD
+   ========================================================================= */
+.hero {
+  padding: 26px 32px 22px;
+  border: 1.5px solid rgba(2, 132, 199, 0.2);
+  background: linear-gradient(135deg, #0077b6 0%, #0096c7 50%, #023e8a 100%);
+  border-radius: 24px;
+  color: #ffffff;
+  box-shadow: 0 20px 45px rgba(2, 62, 138, 0.18);
 }
 
-label span, .gr-input-label {
-  color: var(--ink) !important;
-  font-family: Arial, sans-serif !important;
-  font-weight: 700 !important;
+.hero-hospital {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  min-height: 150px;
 }
 
-input, textarea, select {
-  font-family: Arial, sans-serif !important;
-  border-color: #d5e4ee !important;
-  border-radius: 12px !important;
-  box-shadow: none !important;
-  color: #ffffff !important;
-  background-color: rgba(14, 27, 40, 0.95) !important;
+.hero-left {
+  max-width: 70%;
 }
 
-input:focus, textarea:focus, select:focus {
-  border-color: var(--primary) !important;
-  box-shadow: 0 0 0 3px rgba(13,106,138,.12) !important;
+.hero-right {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-end;
 }
 
-.primary-button {
-  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-deep) 100%) !important;
-  color: white !important;
-  border: 0 !important;
-  border-radius: 12px !important;
-  font: 700 15px Arial, sans-serif !important;
-  box-shadow: 0 14px 30px rgba(13,106,138,.20) !important;
-  cursor: pointer;
+.hero h1 {
+  margin: 10px 0 6px;
+  font-size: clamp(26px, 3.8vw, 44px);
+  line-height: 1.05;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: #ffffff;
 }
 
-.primary-button:hover {
-  filter: brightness(1.05);
+.hero p {
+  max-width: 680px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 15px;
+  line-height: 1.5;
+  margin: 0;
 }
 
-.secondary-button {
-  border: 1px solid #cfe0eb !important;
-  color: #0c2e38 !important;
-  border-radius: 12px !important;
-  background: #f4fbff !important;
-  font-weight: 700 !important;
-  cursor: pointer;
+.brand-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 999px;
+  padding: 8px 16px;
+  backdrop-filter: blur(6px);
 }
 
-.demo-fast-btn {
-  background: linear-gradient(135deg, #00e5b0 0%, #059669 100%) !important;
-  color: #041620 !important;
-  font-weight: 800 !important;
-  font-size: 15px !important;
-  border-radius: 14px !important;
-  padding: 14px 20px !important;
-  box-shadow: 0 10px 25px rgba(0, 229, 176, 0.35) !important;
-  border: none !important;
-  cursor: pointer;
-  width: 100%;
+.brand-mark {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #ffffff;
+  color: #0077b6;
+  font-weight: 900;
+  font-size: 16px;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+}
+
+.portal-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: #ffffff;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font: 800 11px Arial, sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.portal-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.9);
 }
 
 .progress {
   display: flex;
   gap: 12px;
-  margin: 18px 0 20px;
+  margin: 20px 0;
 }
 
 .progress-item {
   flex: 1;
-  border-top: 4px solid rgba(255, 255, 255, 0.15);
+  border-top: 4px solid #cbd5e1;
   padding-top: 10px;
-  color: var(--muted);
-  font: 800 11px Arial, sans-serif;
+  color: #64748b;
+  font: 800 11.5px 'Plus Jakarta Sans', sans-serif;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   transition: all 0.2s ease;
 }
 
 .progress-item.active {
-  color: var(--secondary);
-  border-color: var(--secondary);
+  color: #0077b6;
+  border-color: #0077b6;
 }
 
-.login-panel {
-  max-width: 580px;
-  margin: 40px auto;
-  padding: 36px 32px;
-  background: rgba(12, 27, 38, 0.92);
-  border: 1px solid var(--line);
-  border-radius: 24px;
-  box-shadow: var(--shadow);
-}
-
-.login-mark {
-  display: inline-block;
-  font: 800 24px/1 Arial, sans-serif;
-  color: white;
-  letter-spacing: 0.08em;
-}
-
-.login-copy {
-  color: var(--muted);
-  font: 14px/1.5 Arial, sans-serif;
-  margin: 0 0 20px;
+.audio-box {
+  border: 2px dashed #0096c7;
+  background: #f0f9ff;
+  border-radius: 18px;
+  padding: 10px;
 }
 
 .captcha-row {
@@ -336,45 +527,50 @@ input:focus, textarea:focus, select:focus {
 }
 
 .captcha-question {
-  color: var(--secondary);
+  color: #0077b6;
   font: 800 15px Arial, sans-serif;
   padding: 12px 16px;
-  background: rgba(169, 240, 213, 0.12);
-  border: 1px solid rgba(169, 240, 213, 0.3);
+  background: #e0f2fe;
+  border: 1px solid #bae6fd;
   border-radius: 12px;
 }
 
 .notice {
-  color: #ff8e8e;
-  font: 600 13px Arial, sans-serif;
+  color: #dc2626;
+  font: 700 13px Arial, sans-serif;
   padding: 10px 0;
 }
 
 .notification {
-  color: var(--secondary);
-  font: 600 13px Arial, sans-serif;
+  color: #0284c7;
+  font: 700 13px Arial, sans-serif;
   margin-top: 10px;
 }
 
-.share-actions {
+.share-center-wrap {
+  background: #ffffff;
+  border: 1.5px solid rgba(2, 132, 199, 0.25);
+  border-radius: 22px;
+  padding: 24px 28px;
+  margin: 20px 0;
+  box-shadow: 0 16px 40px rgba(2, 62, 138, 0.08);
+}
+
+.share-center-title {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
   gap: 10px;
-  margin-top: 18px;
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--navy-title);
+  margin-bottom: 6px;
 }
 
-.share-action {
-  background: #f4fbff;
-  border: 1px solid #d3e2ec;
-  border-radius: 10px;
-  padding: 8px 14px;
-  font: 700 12px Arial, sans-serif;
-  color: var(--primary-deep) !important;
-  text-decoration: none !important;
-}
-
-.share-action:hover {
-  background: #e7f4fb;
+.share-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin-top: 14px;
 }
 
 .share-action-link {
@@ -382,10 +578,10 @@ input:focus, textarea:focus, select:focus {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 10px 16px;
-  border-radius: 10px;
-  font-weight: 700;
-  font-size: 13px;
+  padding: 12px 18px;
+  border-radius: 12px;
+  font-weight: 800;
+  font-size: 13.5px;
   text-decoration: none !important;
   transition: all 0.2s ease;
 }
@@ -400,45 +596,26 @@ input:focus, textarea:focus, select:focus {
 }
 
 .link-email {
-  background: #38bdf8;
-  color: #041620 !important;
+  background: #0284c7;
+  color: #ffffff !important;
 }
 
 .link-download {
-  background: rgba(255, 255, 255, 0.1);
-  color: #ffffff !important;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-}
-
-.share-center-wrap {
-  background: rgba(10, 28, 40, 0.95);
-  border: 1px solid rgba(56, 189, 248, 0.3);
-  border-radius: 20px;
-  padding: 22px 24px;
-  margin: 20px 0;
-  box-shadow: 0 14px 35px rgba(0, 0, 0, 0.4);
-}
-
-.share-center-title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 17px;
-  font-weight: 800;
-  color: #ffffff;
-  margin-bottom: 6px;
-}
-
-.share-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  margin-top: 14px;
+  background: #f0f9ff;
+  color: #0284c7 !important;
+  border: 1.5px solid #bae6fd;
 }
 
 @media (max-width: 768px) {
+  .poster-pillars-grid {
+    grid-template-columns: 1fr;
+  }
   .share-grid {
     grid-template-columns: 1fr;
+  }
+  .team-members-bar {
+    flex-direction: column;
+    align-items: flex-start;
   }
   .hero-hospital {
     flex-direction: column;
@@ -763,8 +940,8 @@ def _local_project_answer(lowered):
         return "AEROVA cannot diagnose medical conditions. It is an acoustic triage screening aid designed to assist clinical decision-making."
     if "confidence" in lowered or "score" in lowered:
         return "The confidence score reflects acoustic model conviction based on MFCC spectrogram features, not the probability of clinical outcome."
-    if "who made" in lowered or "author" in lowered or "team" in lowered or "developer" in lowered:
-        return "AEROVA was developed by Chinni200517 for Team NOVIX as an acoustic respiratory clinical triage system."
+    if "who made" in lowered or "author" in lowered or "team" in lowered or "developer" in lowered or "novix" in lowered:
+        return "AEROVA was developed by Chinni200517 for Team Novix (Chinni Krishna B, Hemashree D G, Pruthvi N) as an acoustic respiratory clinical triage system."
     return None
 
 
@@ -784,7 +961,7 @@ def _chat_response(message, history, api_key=None):
     elif (gemini_response := _safe_gemini_answer(question, history, api_key)):
         answer = gemini_response
     else:
-        answer = "AEROVA by Team NOVIX analyses acoustic cough patterns using 10 ensemble machine learning models to detect respiratory infection signals. It is a screening aid, not emergency care."
+        answer = "AEROVA by Team Novix analyses acoustic cough patterns using ensemble machine learning models to detect respiratory infection signals. It is a screening aid, not emergency care."
 
     history.append({"role": "user", "content": question})
     history.append({"role": "assistant", "content": answer})
@@ -805,7 +982,7 @@ def _build_whatsapp_message(patient_id, label, confidence, risk, model, date, ag
     clean_summary = re.sub(r"\s+", " ", clean_summary).strip()
     status_icon = "🟢" if label == "Healthy" else "🔴"
     return (
-        f"🏥 *TEAM NOVIX AEROVA - DIGITAL CLINICAL PRESCRIPTION (Rx)*\n"
+        f"🏥 *NOVIX AEROVA - DIGITAL CLINICAL PRESCRIPTION (Rx)*\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🆔 *Patient ID:* {patient_id}\n"
         f"📅 *Prescription Date:* {date}\n"
@@ -825,7 +1002,7 @@ def _build_whatsapp_message(patient_id, label, confidence, risk, model, date, ag
 def _generate_whatsapp_link(phone, wa_message_text):
     phone_clean = re.sub(r"[^\d]", "", str(phone or "").strip())
     if not wa_message_text:
-        return '<div style="color: #ff8e8e; font-size: 12px;">⚠️ Please run assessment to generate clinical report first.</div>'
+        return '<div class="notice">⚠️ Please run assessment to generate clinical report first.</div>'
     encoded_msg = quote(str(wa_message_text))
     if phone_clean:
         wa_url = f"https://wa.me/{phone_clean}?text={encoded_msg}"
@@ -835,12 +1012,12 @@ def _generate_whatsapp_link(phone, wa_message_text):
         target_desc = "your selected contact / patient"
 
     return f'''
-    <div style="margin-top: 10px; background: rgba(37, 211, 102, 0.12); border: 1px solid #25d366; border-radius: 12px; padding: 14px 18px;">
-      <div style="color: #25d366; font-weight: 800; font-size: 13px; margin-bottom: 6px;">💬 WhatsApp Share Link Ready:</div>
+    <div style="margin-top: 10px; background: #f0fdf4; border: 1.5px solid #25d366; border-radius: 14px; padding: 16px 20px;">
+      <div style="color: #166534; font-weight: 800; font-size: 13.5px; margin-bottom: 6px;">💬 WhatsApp Share Link Ready:</div>
       <a href="{escape(wa_url)}" target="_blank" class="share-action-link link-wa" style="font-size: 14px; font-weight: 800; padding: 12px 22px;">
-        🚀 Click to Open WhatsApp & Send to {escape(target_desc)}
+        🚀 Click to Open WhatsApp & Share via WhatsApp
       </a>
-      <div style="color: var(--muted); font-size: 11px; margin-top: 8px;">Tip: Once WhatsApp opens, tap <b>Attach 📎 → Document</b> to attach your downloaded PDF report!</div>
+      <div style="color: #475569; font-size: 11.5px; margin-top: 8px;">Tip: Once WhatsApp opens, tap <b>Attach 📎 → Document</b> to attach your downloaded PDF report!</div>
     </div>
     '''
 
@@ -873,11 +1050,11 @@ def _handle_open_gmail_compose(recipient, patient_id, wa_message_text):
     encoded_body = quote(str(wa_message_text or ""))
     gmail_url = f"https://mail.google.com/mail/?view=cm&fs=1&to={encoded_to}&su={encoded_sub}&body={encoded_body}"
     return (
-        f'<div style="margin-top: 10px; background: rgba(56, 189, 248, 0.12); border: 1px solid #38bdf8; border-radius: 12px; padding: 14px 18px;">'
-        f'<div style="color: #38bdf8; font-weight: 800; font-size: 13px; margin-bottom: 6px;">✉️ Gmail Web Compose Ready:</div>'
-        f'<a href="{escape(gmail_url)}" target="_blank" class="share-action-link link-email" style="font-size: 14px; font-weight: 800; padding: 12px 22px; background: linear-gradient(135deg, #ea4335, #c5221f); color: #fff;">'
+        f'<div style="margin-top: 10px; background: #f0f9ff; border: 1.5px solid #0284c7; border-radius: 14px; padding: 16px 20px;">'
+        f'<div style="color: #0284c7; font-weight: 800; font-size: 13.5px; margin-bottom: 6px;">✉️ Gmail Web Compose Ready:</div>'
+        f'<a href="{escape(gmail_url)}" target="_blank" class="share-action-link link-email" style="font-size: 14px; font-weight: 800; padding: 12px 24px; background: linear-gradient(135deg, #ea4335, #c5221f); color: #fff;">'
         f'🚀 Click to Open in Gmail Compose</a>'
-        f'<div style="color: var(--muted); font-size: 11px; margin-top: 6px;">Opens Gmail in a new tab with recipient, subject, and prescription pre-filled.</div>'
+        f'<div style="color: #64748b; font-size: 11.5px; margin-top: 6px;">Opens Gmail in a new tab with recipient, subject, and prescription pre-filled.</div>'
         f'</div>'
     )
 
@@ -900,7 +1077,7 @@ def _run_prediction(predict_fn, email, *values):
     confidence = float(metadata.get("confidence", 0.85))
     risk = str(metadata.get("risk", "Low risk"))
 
-    verdict_color = "#00e5b0" if label == "Healthy" else "#f43f5e"
+    verdict_color = "#0284c7" if label == "Healthy" else "#dc2626"
     verdict_icon = "🟢" if label == "Healthy" else "🔴"
 
     report_text = f"TEAM NOVIX AEROVA Medical Prescription | Patient ID: {patient_id}\n" + re.sub(r"<[^>]+>", " ", result + " " + details)
@@ -916,49 +1093,49 @@ def _run_prediction(predict_fn, email, *values):
 
     email_report = f'''<!doctype html>
 <html><head><meta charset="utf-8"><title>{escape(subject)}</title></head>
-<body style="margin:0;background:#050d17;font-family:'Segoe UI',Arial,sans-serif;color:#f1f5f9;padding:20px;">
-  <div style="max-width:780px;margin:0 auto;background:#0e1728;border:2px solid #1e3a5f;border-radius:20px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.6);">
-    <div style="background:linear-gradient(135deg,#0c233c,#006d77);padding:30px 36px;border-bottom:3px solid #00e5b0;">
+<body style="margin:0;background:#f0f7fd;font-family:'Segoe UI',Arial,sans-serif;color:#1e293b;padding:24px;">
+  <div style="max-width:780px;margin:0 auto;background:#ffffff;border:2px solid #0096c7;border-radius:22px;overflow:hidden;box-shadow:0 20px 60px rgba(2,62,138,0.14);">
+    <div style="background:linear-gradient(135deg,#0077b6,#023e8a);padding:32px 38px;color:#ffffff;">
       <table role="presentation" style="width:100%;border-collapse:collapse;">
         <tr>
           <td>
-            <div style="font-size:12px;letter-spacing:2.5px;font-weight:800;text-transform:uppercase;color:#7bf5d4;">TEAM NOVIX · CLINICAL PULMONOLOGY</div>
+            <div style="font-size:12px;letter-spacing:2.5px;font-weight:800;text-transform:uppercase;color:#90e0ef;">TEAM NOVIX · DIGITAL CLINICAL CARE</div>
             <h1 style="margin:8px 0 4px;font-size:32px;font-weight:900;color:#ffffff;">AEROVA DIGITAL CLINICAL PRESCRIPTION</h1>
-            <div style="font-size:13px;color:#d8f3f6;">Acoustic Respiratory Screening, Biomarker Analysis & Triage Directive</div>
+            <div style="font-size:14px;color:#e0f2fe;">Listen. Detect. Breathe Better. · Acoustic Respiratory Screening</div>
           </td>
           <td style="text-align:right;vertical-align:middle;">
-            <div style="font-size:48px;font-weight:900;color:#00e5b0;font-family:serif;line-height:1;">℞</div>
+            <div style="font-size:48px;font-weight:900;color:#ffffff;font-family:serif;line-height:1;">℞</div>
           </td>
         </tr>
       </table>
     </div>
-    <div style="padding:28px 36px;">
-      <table role="presentation" style="width:100%;border-collapse:collapse;background:#08101c;border:1px solid #182e4b;border-radius:12px;color:#f1f5f9;margin-bottom:24px;">
+    <div style="padding:30px 38px;">
+      <table role="presentation" style="width:100%;border-collapse:collapse;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:14px;color:#1e293b;margin-bottom:24px;">
         <tr>
-          <td style="padding:14px 18px;border-bottom:1px solid #182e4b;width:50%;">
-            <span style="font-size:11px;text-transform:uppercase;color:#94a3b8;font-weight:700;">Patient ID</span><br>
-            <strong style="color:#00e5b0;font-size:17px;font-family:monospace;">{escape(patient_id)}</strong>
+          <td style="padding:14px 18px;border-bottom:1px solid #e2e8f0;width:50%;">
+            <span style="font-size:11px;text-transform:uppercase;color:#64748b;font-weight:800;">Patient ID</span><br>
+            <strong style="color:#0077b6;font-size:17px;font-family:monospace;">{escape(patient_id)}</strong>
           </td>
-          <td style="padding:14px 18px;border-bottom:1px solid #182e4b;width:50%;">
-            <span style="font-size:11px;text-transform:uppercase;color:#94a3b8;font-weight:700;">Prescription Date</span><br>
-            <strong style="color:#ffffff;font-size:14px;">{escape(report_date)}</strong>
+          <td style="padding:14px 18px;border-bottom:1px solid #e2e8f0;width:50%;">
+            <span style="font-size:11px;text-transform:uppercase;color:#64748b;font-weight:800;">Prescription Date</span><br>
+            <strong style="color:#0a2540;font-size:14px;">{escape(report_date)}</strong>
           </td>
         </tr>
         <tr>
           <td style="padding:14px 18px;">
-            <span style="font-size:11px;text-transform:uppercase;color:#94a3b8;font-weight:700;">Patient Profile</span><br>
-            <strong style="color:#ffffff;font-size:14px;">{escape(str(age))} years · {escape(str(gender).title())}</strong>
+            <span style="font-size:11px;text-transform:uppercase;color:#64748b;font-weight:800;">Patient Profile</span><br>
+            <strong style="color:#0a2540;font-size:14px;">{escape(str(age))} years · {escape(str(gender).title())}</strong>
           </td>
           <td style="padding:14px 18px;">
-            <span style="font-size:11px;text-transform:uppercase;color:#94a3b8;font-weight:700;">Prescribing Clinician</span><br>
-            <strong style="color:#38bdf8;font-size:14px;">{escape(str(email or 'Dr. On-Duty (Team NOVIX)'))}</strong>
+            <span style="font-size:11px;text-transform:uppercase;color:#64748b;font-weight:800;">Prescribing Clinician</span><br>
+            <strong style="color:#0284c7;font-size:14px;">{escape(str(email or 'Dr. On-Duty (Team NOVIX)'))}</strong>
           </td>
         </tr>
       </table>
-      <div style="background:#091424;border:2px solid {verdict_color};border-radius:16px;padding:24px;margin-bottom:22px;">
+      <div style="background:#ffffff;border:2px solid {verdict_color};border-radius:16px;padding:24px;margin-bottom:22px;box-shadow:0 10px 25px rgba(2,62,138,0.06);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <span style="font-size:12px;font-weight:800;letter-spacing:2px;color:#38bdf8;text-transform:uppercase;">℞ PRIMARY CLINICAL READOUT</span>
-          <span style="background:{verdict_color}22;color:{verdict_color};border:1px solid {verdict_color};padding:4px 12px;border-radius:20px;font-size:12px;font-weight:800;">{escape(risk).upper()} RISK</span>
+          <span style="font-size:12px;font-weight:800;letter-spacing:2px;color:#0077b6;text-transform:uppercase;">℞ PRIMARY CLINICAL READOUT</span>
+          <span style="background:#e0f2fe;color:{verdict_color};border:1.5px solid {verdict_color};padding:4px 14px;border-radius:20px;font-size:12px;font-weight:800;">{escape(risk).upper()} RISK</span>
         </div>
         <div style="font-size:38px;font-weight:900;color:{verdict_color};text-transform:uppercase;margin:8px 0;">
           {verdict_icon} {escape(label)}
@@ -1021,19 +1198,19 @@ def _run_prediction(predict_fn, email, *values):
         <span>📤</span>
         <span>Multi-Channel Report Share & Export Center</span>
       </div>
-      <p style="color: var(--muted); font-size: 13px; margin: 0 0 14px;">Share this clinical screening summary directly to WhatsApp, draft an email, or download verified files.</p>
+      <p style="color: var(--text-muted); font-size: 13.5px; margin: 0 0 14px;">Share this clinical screening summary directly to WhatsApp, draft an email, or download verified files.</p>
       
       <div class="share-grid">
         <!-- WhatsApp Channel -->
         <div>
-          <div style="font-weight: 800; font-size: 14px; color: #ffffff; margin-bottom: 6px;">
+          <div style="font-weight: 800; font-size: 14px; color: var(--navy-title); margin-bottom: 6px;">
             <span style="color: #25d366;">💬</span> Share via WhatsApp
           </div>
           <div style="display: flex; flex-direction: column; gap: 8px;">
             <a class="share-action-link link-wa" href="{escape(wa_default_link)}" target="_blank">
-              <span>📲 Open WhatsApp (Choose Contact)</span>
+              <span>📲 Open WhatsApp & Share via WhatsApp</span>
             </a>
-            <div style="font-size: 11px; color: var(--muted); background: rgba(37, 211, 102, 0.08); border-left: 3px solid #25d366; padding: 6px 10px; border-radius: 6px;">
+            <div style="font-size: 11.5px; color: #475569; background: #f0fdf4; border-left: 3px solid #25d366; padding: 6px 10px; border-radius: 6px;">
               📄 <b>WhatsApp Tip:</b> Click Open WhatsApp above, then tap 📎 <b>Attach → Document</b> to attach the PDF report!
             </div>
           </div>
@@ -1041,8 +1218,8 @@ def _run_prediction(predict_fn, email, *values):
 
         <!-- Email & Downloads Channel -->
         <div>
-          <div style="font-weight: 800; font-size: 14px; color: #ffffff; margin-bottom: 6px;">
-            <span style="color: #38bdf8;">✉️</span> Share via Email & Downloads
+          <div style="font-weight: 800; font-size: 14px; color: var(--navy-title); margin-bottom: 6px;">
+            <span style="color: #0284c7;">✉️</span> Share via Email & Downloads
           </div>
           <div style="display: flex; flex-direction: column; gap: 8px;">
             <a class="share-action-link link-email" href="{escape(gmail_web_link)}" target="_blank" style="background: linear-gradient(135deg, #ea4335, #c5221f); color: #fff;">
@@ -1079,8 +1256,16 @@ def _run_prediction(predict_fn, email, *values):
 # ---------------------------------------------------------------------------
 def build_app(predict_fn, model_files, default_model):
     captcha_question, captcha_answer = _new_captcha()
+    banner_b64 = _get_banner_base64()
 
-    with gr.Blocks(title="AEROVA | Respiratory Sound Check · Team NOVIX") as interface:
+    poster_img_tag = (
+        f'<div style="text-align: center; margin: 10px 0 24px;">'
+        f'<img src="data:image/jpeg;base64,{banner_b64}" alt="AEROVA Team Novix" '
+        f'style="width: 100%; max-width: 980px; border-radius: 22px; box-shadow: 0 16px 45px rgba(2, 62, 138, 0.16); border: 2.5px solid #e0f2fe; display: block; margin: 0 auto;" />'
+        f'</div>'
+    ) if banner_b64 else ""
+
+    with gr.Blocks(title="AEROVA · TEAM NOVIX | Listen. Detect. Breathe Better.") as interface:
 
         # State Stores
         login_email_state = gr.State("")
@@ -1091,64 +1276,157 @@ def build_app(predict_fn, model_files, default_model):
         report_pdf_state = gr.State("")
         patient_id_state = gr.State("")
 
-        # 1. Login View (The sleek hospital entrance from last version)
+        # 1. Entrance / Login View (The Poster-themed Blue Medical Showcase)
         with gr.Column(elem_classes=["login-shell"]) as login_view:
-            gr.HTML('''<div class="login-panel">
-                <div class="login-mark">AEROVA <span style="font-size: 12px; background: rgba(0,229,176,0.2); color: #00e5b0; border: 1px solid #00e5b0; padding: 2px 8px; border-radius: 12px; vertical-align: middle;">TEAM NOVIX</span></div>
-                <div class="eyebrow" style="margin-top: 18px; color: var(--secondary);">Hospital Respiratory Screening</div>
-                <h1 style="margin: 12px 0 6px; font-size: clamp(26px, 3vw, 40px); line-height: 1.08; color: white;">Acoustic triage for early respiratory assessment</h1>
-                <p class="login-copy">Sign in to continue to the hospital-grade screening workspace for cough and respiratory symptom review.</p>
-                <div class="dashboard-metrics">
-                    <div class="metric-item">
-                        <span class="metric-label">Active cases</span>
-                        <span class="metric-value">184</span>
-                        <span class="metric-trend">+12.4% this week</span>
-                    </div>
-                    <div class="metric-item">
-                        <span class="metric-label">Response time</span>
-                        <span class="metric-value">08m</span>
-                        <span class="metric-trend">Fast-track</span>
-                    </div>
-                    <div class="metric-item">
-                        <span class="metric-label">Emergency status</span>
-                        <span class="metric-value">Level 2</span>
-                        <span class="metric-trend">Monitoring</span>
-                    </div>
-                </div>
-            </div>''')
 
-            with gr.Row():
+            # Top Poster Showcase Card
+            gr.HTML(f'''
+            <div class="poster-hero-card">
+              <!-- Top Row: Project Title + Big Team Name -->
+              <div class="poster-top-row">
+                <div class="poster-title-area">
+                  <span class="project-kicker">PROJECT TITLE</span>
+                  <div class="project-brand-title">
+                    <span>AEROVA</span>
+                    <span style="font-size: 38px; color: #0096c7;">💨</span>
+                  </div>
+                  <div class="project-brand-tagline">Listen. Detect. Breathe Better.</div>
+                  <p style="color: #64748b; font-size: 14px; margin: 0; line-height: 1.5;">
+                    State-of-the-art acoustic triage platform powered by 10 ensemble machine learning classifiers, 
+                    deep MFCC biomarker extraction, and automated clinical prescriptions.
+                  </p>
+                </div>
+
+                <!-- Big Attractive Company / Team Name -->
+                <div class="team-novix-box">
+                  <div class="team-novix-label">TEAM NAME</div>
+                  <div class="team-novix-title">Novix</div>
+                  <div style="font-size: 11.5px; font-weight: 700; color: #0077b6; margin-top: 4px; letter-spacing: 0.05em;">
+                    PULMONARY AI INNOVATION
+                  </div>
+                </div>
+              </div>
+
+              <!-- Embedded Official Poster Graphic -->
+              {poster_img_tag}
+
+              <!-- 3 Core Pillars from the Poster -->
+              <div class="poster-pillars-grid">
+                <div class="pillar-card">
+                  <div class="pillar-icon-wrap">🎙️</div>
+                  <div class="pillar-title">1. Smart Cough Detection</div>
+                  <p class="pillar-desc">Uses AI to analyze cough patterns and track acoustic frequency and intensity with high precision.</p>
+                </div>
+
+                <div class="pillar-card">
+                  <div class="pillar-icon-wrap">🛡️</div>
+                  <div class="pillar-title">2. Personalized Health Insights</div>
+                  <p class="pillar-desc">Provides actionable clinical insights and recommendations for better respiratory health and recovery.</p>
+                </div>
+
+                <div class="pillar-card">
+                  <div class="pillar-icon-wrap">📱</div>
+                  <div class="pillar-title">3. Easy & Accessible</div>
+                  <p class="pillar-desc">Seamless web and mobile experience to monitor, manage, and improve your breathing anywhere, anytime.</p>
+                </div>
+              </div>
+
+              <!-- Team Members Bar from Poster -->
+              <div class="team-members-bar">
+                <div class="members-tag">
+                  <span>👥</span>
+                  <span>TEAM MEMBERS</span>
+                </div>
+                <div class="member-item">
+                  <span>👤 Chinni Krishna B</span>
+                  <span class="member-roll">1JB25MC013</span>
+                </div>
+                <div class="member-item">
+                  <span>👤 Hemashree D G</span>
+                  <span class="member-roll">1JB25MC021</span>
+                </div>
+                <div class="member-item">
+                  <span>👤 Pruthvi N</span>
+                  <span class="member-roll">1JB25MC037</span>
+                </div>
+              </div>
+            </div>
+            ''')
+
+            # The Clean Login Card
+            gr.HTML('''
+            <div class="login-panel">
+              <div style="text-align: center; margin-bottom: 20px;">
+                <div style="font-size: 12px; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; color: #0284c7; margin-bottom: 4px;">
+                  CLINICAL ACCESS GATE
+                </div>
+                <h2 style="font-size: 26px; font-weight: 900; color: #0a2540; margin: 0 0 6px;">Sign In to Team Novix Workspace</h2>
+                <p style="color: #64748b; font-size: 13.5px; margin: 0;">Access the acoustic triage platform for cough analysis and clinical report generation.</p>
+              </div>
+
+              <div class="dashboard-metrics">
+                <div class="metric-item">
+                  <span class="metric-label">Active cases</span>
+                  <span class="metric-value">184</span>
+                  <span class="metric-trend">● Live Monitoring</span>
+                </div>
+                <div class="metric-item">
+                  <span class="metric-label">Model Accuracy</span>
+                  <span class="metric-value">85.7%</span>
+                  <span class="metric-trend">Extra Trees</span>
+                </div>
+                <div class="metric-item">
+                  <span class="metric-label">Emergency status</span>
+                  <span class="metric-value">Level 2</span>
+                  <span class="metric-trend">ER Watch Active</span>
+                </div>
+              </div>
+            </div>
+            ''')
+
+            with gr.Column(elem_classes=["login-panel"], scale=1):
+                # Instant 1-Click Demo Sign-in
                 fast_demo_btn = gr.Button("⚡ Instant Demo Sign-in (1-Click)", elem_classes=["demo-fast-btn"])
 
-            gr.HTML('<div style="text-align: center; color: var(--muted); font-size: 11px; margin: 18px 0 10px; font-weight: 700; letter-spacing: 0.08em;">— OR ENTER CLINICIAN CREDENTIALS —</div>')
+                gr.HTML('<div style="text-align: center; color: #64748b; font-size: 11.5px; margin: 18px 0 12px; font-weight: 800; letter-spacing: 0.08em;">— OR ENTER CLINICIAN CREDENTIALS —</div>')
 
-            login_email = gr.Textbox(label="Clinician Email", placeholder="doctor@hospital-aerova.org")
-            login_password = gr.Textbox(label="Password", type="password", placeholder="8+ chars with Aa1!")
-            with gr.Row(elem_classes=["captcha-row"]):
-                captcha_prompt = gr.Markdown(f'<div class="captcha-question">{captcha_question}</div>')
-                captcha_entry = gr.Textbox(label="CAPTCHA answer", placeholder="Enter the number", scale=2)
-                captcha_refresh = gr.Button("↻", elem_classes=["secondary-button", "captcha-refresh"], scale=0)
+                login_email = gr.Textbox(label="Clinician Email", placeholder="doctor@hospital-aerova.org")
+                login_password = gr.Textbox(label="Password", type="password", placeholder="8+ chars with Aa1!")
+                with gr.Row(elem_classes=["captcha-row"]):
+                    captcha_prompt = gr.Markdown(f'<div class="captcha-question">{captcha_question}</div>')
+                    captcha_entry = gr.Textbox(label="CAPTCHA answer", placeholder="Enter the number", scale=2)
+                    captcha_refresh = gr.Button("↻", elem_classes=["secondary-button", "captcha-refresh"], scale=0)
 
-            login_button = gr.Button("Continue securely", variant="primary", elem_classes=["primary-button"])
-            login_notice = gr.HTML()
-            gr.HTML('<p class="login-copy" style="font-size: 12px; margin-top: 14px; text-align: center;">Enter your email carefully. The final prescription will be addressed directly to this clinician email.</p>')
+                login_button = gr.Button("Continue Securely", variant="primary", elem_classes=["primary-button"])
+                login_notice = gr.HTML()
+                gr.HTML('<p style="color: #64748b; font-size: 12px; margin-top: 14px; text-align: center;">Enter your email carefully. The final prescription will be addressed directly to this clinician email.</p>')
 
-        # 2. Main Workspace (The 3-step wizard workflow)
+        # 2. Main Workspace (Guided 3-step wizard workflow in the Blue Medical Theme)
         with gr.Column(visible=False) as workspace:
-            gr.HTML('''<header class="hero hero-hospital">
+            gr.HTML('''
+            <header class="hero hero-hospital">
                 <div class="hero-left">
-                    <div class="brand-banner"><span class="brand-mark">+</span><span style="font-weight: 800; letter-spacing: .08em; text-transform: uppercase;">AEROVA · TEAM NOVIX</span></div>
-                    <div class="eyebrow" style="margin-top: 18px; color: rgba(255,255,255,0.84);">Hospital Respiratory Triage Unit</div>
-                    <h1>Acoustic screening for early respiratory health review</h1>
-                    <p>Guided assessment from recording intake to clinical risk summary, designed for a modern hospital workflow.</p>
+                    <div class="brand-banner">
+                      <span class="brand-mark">✦</span>
+                      <span style="font-weight: 800; letter-spacing: .08em; text-transform: uppercase;">AEROVA · TEAM NOVIX</span>
+                    </div>
+                    <div style="font-size: 12px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: #90e0ef; margin-top: 14px;">
+                      Listen. Detect. Breathe Better.
+                    </div>
+                    <h1>Acoustic Screening for Early Respiratory Health Review</h1>
+                    <p>Guided assessment from recording intake to clinical risk summary, designed by Team Novix for a modern hospital workflow.</p>
                 </div>
                 <div class="hero-right">
-                    <div class="status-badges">
-                        <span class="portal-chip"><span class="portal-dot"></span>Live triage active</span>
+                    <div style="display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end;">
+                        <span class="portal-chip"><span class="portal-dot"></span>Live Triage Active</span>
                         <span class="portal-chip"><span class="portal-dot"></span>Model: Extra Trees</span>
                     </div>
+                    <div style="font-size: 12px; color: #e0f2fe; text-align: right; margin-top: 6px;">
+                      Team: Chinni Krishna B · Hemashree D G · Pruthvi N
+                    </div>
                 </div>
-            </header>''')
+            </header>
+            ''')
 
             with gr.Accordion("📋 Patient history dashboard", open=False):
                 with gr.Row():
@@ -1156,20 +1434,26 @@ def build_app(predict_fn, model_files, default_model):
                     history_refresh = gr.Button("Search / refresh", elem_classes=["secondary-button"])
                 history_output = gr.HTML(value=history_dashboard_html())
 
-            gr.HTML('<div class="progress"><div class="progress-item active">01 · Recording</div><div class="progress-item">02 · Context</div><div class="progress-item">03 · Readout</div></div>')
+            gr.HTML('''
+            <div class="progress">
+              <div class="progress-item active">01 · Cough Audio Intake</div>
+              <div class="progress-item">02 · Clinical Context</div>
+              <div class="progress-item">03 · Readout & Prescription</div>
+            </div>
+            ''')
 
             # Step 1: Bring a recording
             with gr.Column(elem_classes=["panel"]) as audio_step:
-                gr.HTML('<h2 class="panel-title">Bring a recording</h2><p class="panel-copy">A short, clear 2–6 second cough recording in a quiet room works best.</p>')
+                gr.HTML('<h2 class="panel-title">1. Bring a Cough Recording</h2><p class="panel-copy">A short, clear 2–6 second cough recording in a quiet room produces the most reliable acoustic biomarkers.</p>')
                 audio_input = gr.Audio(type="filepath", sources=["upload", "microphone"], label="Upload or record audio via microphone", elem_classes=["audio-box"])
-                file_input = gr.File(file_count="single", label="Or choose a sound/video file (.wav, .mp3, .webm, .ogg)")
+                file_input = gr.File(file_count="single", label="Or choose an audio/video file (.wav, .mp3, .webm, .ogg)")
                 url_input = gr.Textbox(label="Or paste a direct audio URL", placeholder="https://...")
                 audio_notice = gr.HTML()
-                continue_audio = gr.Button("Continue to clinical context →", variant="primary", elem_classes=["primary-button"])
+                continue_audio = gr.Button("Continue to Clinical Context →", variant="primary", elem_classes=["primary-button"])
 
             # Step 2: Add context
             with gr.Column(visible=False, elem_classes=["panel"]) as context_step:
-                gr.HTML('<h2 class="panel-title">Add a little context</h2><p class="panel-copy">These details help frame the audio signal. They are optional, but useful.</p>')
+                gr.HTML('<h2 class="panel-title">2. Add Patient & Clinical Context</h2><p class="panel-copy">Clinical context details help frame the audio signal and enhance machine learning classification.</p>')
                 manual_notes = gr.Textbox(label="How are you feeling? (Symptoms & notes)", placeholder="For example: dry cough, fatigue, sore throat...", lines=2)
                 with gr.Row():
                     gender = gr.Dropdown(["male", "female", "unknown"], label="Gender", value="unknown")
@@ -1180,35 +1464,35 @@ def build_app(predict_fn, model_files, default_model):
                     fever_muscle_pain = gr.Radio(["true", "false"], label="Fever or body pain present?", value="false")
                 model_choice = gr.Dropdown(choices=model_files, value=default_model, label="Analysis model", visible=False)
                 with gr.Row(elem_classes=["step-actions"]):
-                    back_audio = gr.Button("← Back to recording", elem_classes=["secondary-button"])
-                    predict_button = gr.Button("⚡ Generate clinical triage readout", variant="primary", elem_classes=["primary-button"])
+                    back_audio = gr.Button("← Back to Recording", elem_classes=["secondary-button"])
+                    predict_button = gr.Button("⚡ Generate Clinical Triage Readout", variant="primary", elem_classes=["primary-button"])
 
             # Step 3: Clinical Readout
             with gr.Column(visible=False, elem_classes=["panel"]) as result_step:
-                gr.HTML('<h2 class="panel-title">Your clinical readout</h2><p class="panel-copy">A clear summary of the sound and context signals, ready for follow-up or clinical review.</p>')
+                gr.HTML('<h2 class="panel-title">3. Clinical Readout & Multi-Channel Sharing</h2><p class="panel-copy">A comprehensive summary of acoustic biomarkers, model conviction, and actionable clinical directives.</p>')
                 prediction_output = gr.HTML()
                 quality_output = gr.HTML()
                 details_output = gr.HTML()
 
-                with gr.Accordion("📊 Explainable spectrogram and confidence", open=True):
+                with gr.Accordion("📊 Explainable Spectrogram & Waveform", open=True):
                     explanation_chart = gr.Image(label="Acoustic explanation", interactive=False)
 
-                with gr.Accordion("🧠 Machine learning model comparison", open=False):
+                with gr.Accordion("🧠 Machine Learning Model Benchmark Comparison", open=False):
                     model_comparison_output = gr.HTML()
 
                 # Dedicated WhatsApp Sharing
-                with gr.Accordion("💬 Share directly via WhatsApp to Patient or Clinician", open=True):
+                with gr.Accordion("💬 Share Directly via WhatsApp to Patient or Clinician", open=True):
                     with gr.Row():
                         wa_phone_input = gr.Textbox(
                             label="Recipient WhatsApp number (with Country Code)",
                             placeholder="e.g. +91 9876543210",
                             scale=3,
                         )
-                        wa_send_btn = gr.Button("📲 Create WhatsApp share link", variant="primary", elem_classes=["primary-button"], scale=1)
+                        wa_send_btn = gr.Button("📲 Create WhatsApp Share Link", variant="primary", elem_classes=["primary-button"], scale=1)
                     wa_link_output = gr.HTML()
 
                 # Dedicated Gmail Delivery
-                with gr.Accordion("✉️ Automated Gmail & Rich Medical Prescription delivery", open=True):
+                with gr.Accordion("✉️ Automated Gmail & Rich Medical Prescription Delivery", open=True):
                     with gr.Row():
                         email_recipient_input = gr.Textbox(
                             label="Recipient email address",
@@ -1227,21 +1511,21 @@ def build_app(predict_fn, model_files, default_model):
                             scale=2,
                         )
                     with gr.Row():
-                        send_email_now_btn = gr.Button("🚀 Send prescription email now", variant="primary", elem_classes=["primary-button"], scale=2)
-                        open_gmail_compose_btn = gr.Button("✉️ Open Gmail Web compose (1-Click)", elem_classes=["secondary-button"], scale=1)
+                        send_email_now_btn = gr.Button("🚀 Send Prescription Email Now", variant="primary", elem_classes=["primary-button"], scale=2)
+                        open_gmail_compose_btn = gr.Button("✉️ Open Gmail Web Compose (1-Click)", elem_classes=["secondary-button"], scale=1)
                     email_delivery_output = gr.HTML()
 
-                pdf_report = gr.File(label="Download PDF report with verification QR", interactive=False)
+                pdf_report = gr.File(label="Download Verified PDF Report (with QR Authentication)", interactive=False)
 
                 with gr.Row(elem_classes=["result-actions"]):
-                    back_result = gr.Button("← Modify clinical context", elem_classes=["secondary-button"])
-                    new_assessment = gr.Button("Start new assessment", elem_classes=["secondary-button"])
+                    back_result = gr.Button("← Modify Clinical Context", elem_classes=["secondary-button"])
+                    new_assessment = gr.Button("Start New Assessment", elem_classes=["secondary-button"])
 
-                gr.HTML('<div class="safety-alert" style="margin-top: 18px; padding: 16px 20px; background: rgba(244, 63, 94, 0.12); border-left: 4px solid #f43f5e; border-radius: 12px; color: #fecdd3; font-size: 13px;"><strong>When to seek urgent care:</strong> Severe breathing difficulty, chest pain, confusion, blue lips, or rapidly worsening symptoms require urgent medical attention.</div>')
-                gr.HTML('<p class="footnote" style="color: var(--muted); font-size: 12px; margin-top: 12px;">This application is an acoustic screening aid developed by Team NOVIX, not a definitive medical diagnosis. Consult a clinician promptly for emergency care.</p>')
+                gr.HTML('<div class="safety-alert" style="margin-top: 18px; padding: 16px 20px; background: #fee2e2; border-left: 4px solid #ef4444; border-radius: 14px; color: #991b1b; font-size: 13.5px;"><strong>When to seek urgent care:</strong> Severe breathing difficulty, chest pain, confusion, blue lips, or rapidly worsening symptoms require immediate emergency medical attention.</div>')
+                gr.HTML('<p class="footnote" style="color: var(--text-muted); font-size: 12px; margin-top: 12px;">This application is an acoustic screening aid developed by Team Novix, not a definitive medical diagnosis. Consult a clinician promptly for emergency care.</p>')
 
             # Floating / Bottom Assistant
-            with gr.Accordion("🤖 AEROVA respiratory assistant", open=False, elem_classes=["chat-panel"]):
+            with gr.Accordion("🤖 AEROVA-BOT · AI Respiratory Copilot", open=False, elem_classes=["chat-panel"]):
                 gr.Markdown("Ask about the audio workflow, Healthy versus Disease results, recording quality, reports, or urgent-care guidance.")
                 chatbot = gr.Chatbot(label="AEROVA assistant", height=280)
                 with gr.Row():
