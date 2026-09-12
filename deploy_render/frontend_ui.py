@@ -14,7 +14,7 @@ from urllib.parse import quote
 import gradio as gr
 import requests
 
-from reporting import create_pdf_report, history_dashboard_html, save_assessment
+from reporting import create_pdf_report, history_dashboard_html, save_assessment, send_prescription_email
 
 RUNTIME_DIR = Path(__file__).resolve().parent / "runtime"
 USERS_PATH = RUNTIME_DIR / "users.json"
@@ -1156,6 +1156,16 @@ def _run_prediction(predict_fn, email, *values):
         except Exception as exc:
             report_notice += f'<div class="notice">History save warning: {escape(str(exc))}</div>'
 
+    reports_dir = RUNTIME_DIR / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    report_html_file = reports_dir / f"{patient_id}.html"
+    try:
+        report_html_file.write_text(email_report, encoding="utf-8")
+    except Exception:
+        pass
+
+    gmail_web_link = f"https://mail.google.com/mail/?view=cm&fs=1&to={quote(str(email or ''))}&su={quote(subject)}"
+
     # Multi-Channel Share Center HTML
     share_center_html = f'''
     <div class="share-center-wrap">
@@ -1173,9 +1183,14 @@ def _run_prediction(predict_fn, email, *values):
             <span>Share via WhatsApp</span>
           </div>
           <p style="color: #cbd5e1; font-size: 12px; margin: 0 0 12px;">Send report directly to patient or doctor on WhatsApp Web or mobile app.</p>
-          <a class="share-action-link link-wa" href="{escape(wa_default_link)}" target="_blank">
-            <span>📲 Open WhatsApp (Choose Contact)</span>
-          </a>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <a class="share-action-link link-wa" href="{escape(wa_default_link)}" target="_blank">
+              <span>📲 Open WhatsApp (Choose Contact)</span>
+            </a>
+            <div style="font-size: 11px; color: #94a3b8; background: rgba(37, 211, 102, 0.08); border-left: 3px solid #25d366; padding: 6px 10px; border-radius: 6px; line-height: 1.4;">
+              📄 <b>WhatsApp Tip:</b> Click Open WhatsApp above, then tap 📎 <b>Attach → Document</b> to attach the verified PDF report!
+            </div>
+          </div>
         </div>
 
         <!-- Email & Downloads Channel -->
@@ -1185,7 +1200,10 @@ def _run_prediction(predict_fn, email, *values):
             <span>Share via Email & Downloads</span>
           </div>
           <p style="color: #cbd5e1; font-size: 12px; margin: 0 0 12px;">Recipient: <b>{escape(str(email or "Clinician"))}</b></p>
-          <div>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <a class="share-action-link link-email" href="{escape(gmail_web_link)}" target="_blank" style="background: linear-gradient(135deg, #ea4335, #c5221f); color: #fff; font-weight: 800;">
+              ✉️ Open in Gmail Web (1-Click)
+            </a>
             <a class="share-action-link link-email" href="{escape(email_link)}">✉️ Open email draft</a>
             <a class="share-action-link link-download" href="{escape(eml_link)}" download="novix-aerova-{escape(patient_id.lower())}.eml">📥 Download email file (.eml)</a>
             <a class="share-action-link link-download" href="{escape(html_link)}" download="novix-aerova-{escape(patient_id.lower())}.html">🌐 Download web report</a>
@@ -1204,10 +1222,55 @@ def _run_prediction(predict_fn, email, *values):
         return (
             result, combined_details, "", None, "", None,
             history_dashboard_html(), gr.update(visible=False), gr.update(visible=True), wa_message,
+            email_report, "", patient_id, str(email or ""),
         )
     return (
         result, combined_details, quality_markup, chart_path, comparison_markup,
         pdf_path, history_dashboard_html(), gr.update(visible=False), gr.update(visible=True), wa_message,
+        email_report, pdf_path or "", patient_id, str(email or ""),
+    )
+
+
+def _handle_send_email_now(recipient, sender, pwd, patient_id, html_report, pdf_path):
+    recipient_clean = str(recipient or "").strip()
+    if not recipient_clean or "@" not in recipient_clean:
+        return '<div style="background: rgba(244, 63, 94, 0.15); border: 1px solid #f43f5e; color: #fecdd3; padding: 12px 16px; border-radius: 10px; font-weight: 700;">⚠️ Please enter a valid recipient email address.</div>'
+    
+    if not html_report:
+        return '<div style="background: rgba(244, 63, 94, 0.15); border: 1px solid #f43f5e; color: #fecdd3; padding: 12px 16px; border-radius: 10px; font-weight: 700;">⚠️ Please run an acoustic assessment first to generate the prescription.</div>'
+
+    subject = f"TEAM NOVIX Medical Prescription (Rx) - {patient_id or 'AEROVA'}"
+    success, msg = send_prescription_email(
+        to_email=recipient_clean,
+        subject=subject,
+        html_content=html_report,
+        pdf_path=pdf_path if pdf_path and os.path.exists(pdf_path) else None,
+        sender_email=sender,
+        sender_password=pwd,
+    )
+    if success:
+        return f'<div style="background: rgba(0, 229, 176, 0.15); border: 1px solid #00e5b0; color: #00e5b0; padding: 14px 18px; border-radius: 12px; font-weight: 800;">{escape(msg)}</div>'
+    return (
+        f'<div style="background: rgba(244, 63, 94, 0.15); border: 1px solid #f43f5e; color: #fecdd3; padding: 14px 18px; border-radius: 12px;">'
+        f'<div style="font-weight: 800; font-size: 13px; margin-bottom: 4px;">⚠️ Automated Delivery Notice:</div>'
+        f'<div style="font-size: 12px; line-height: 1.5;">{escape(msg)}</div>'
+        f'</div>'
+    )
+
+
+def _handle_open_gmail_compose(recipient, patient_id, wa_message_text):
+    encoded_to = quote(str(recipient or "").strip())
+    subject = f"TEAM NOVIX Medical Prescription (Rx) - {patient_id or 'AEROVA'}"
+    encoded_sub = quote(subject)
+    encoded_body = quote(str(wa_message_text or ""))
+    gmail_url = f"https://mail.google.com/mail/?view=cm&fs=1&to={encoded_to}&su={encoded_sub}&body={encoded_body}"
+    return (
+        f'<div style="margin-top: 10px; background: rgba(56, 189, 248, 0.12); border: 1px solid #38bdf8; border-radius: 12px; padding: 14px 18px;">'
+        f'<div style="color: #38bdf8; font-weight: 800; font-size: 13px; margin-bottom: 6px;">✉️ Gmail Web Compose Ready:</div>'
+        f'<a href="{escape(gmail_url)}" target="_blank" class="share-action-link link-email" style="font-size: 14px; font-weight: 800; padding: 12px 22px; background: linear-gradient(135deg, #ea4335, #c5221f);">'
+        f'🚀 Click to Open in Gmail Compose</a>'
+        f'<div style="color: #94a3b8; font-size: 11px; margin-top: 6px;">Opens Gmail in a new tab with recipient, subject, and prescription pre-filled.</div>'
+        f'</div>'
     )
 
 
@@ -1223,6 +1286,9 @@ def build_app(predict_fn, model_files, default_model):
         gemini_key_state = gr.State(ACTIVE_GEMINI_KEY)
         captcha_answer_state = gr.State(captcha_answer)
         wa_message_state = gr.State("")
+        report_html_state = gr.State("")
+        report_pdf_state = gr.State("")
+        patient_id_state = gr.State("")
 
         # =====================================================================
         # 1. ENTRANCE & AUTHENTICATION VIEW (TEAM NOVIX)
@@ -1383,6 +1449,35 @@ def build_app(predict_fn, model_files, default_model):
                         wa_send_btn = gr.Button("📲 Create WhatsApp Link", variant="primary", elem_classes=["primary-button"], scale=1)
                     wa_link_output = gr.HTML()
 
+                # Dedicated Gmail & Automated Email Delivery Box
+                with gr.Accordion("✉️ Automated Gmail & Rich Medical Prescription Delivery", open=True):
+                    gr.HTML('''
+                    <div style="margin-bottom: 12px; color: #94a3b8; font-size: 13px; line-height: 1.5;">
+                      Send the complete, styled <b>AEROVA Medical Prescription (Rx)</b> directly to the patient's or clinician's Gmail inbox with verified PDF attached.
+                    </div>
+                    ''')
+                    with gr.Row():
+                        email_recipient_input = gr.Textbox(
+                            label="Recipient Email Address",
+                            placeholder="patient@gmail.com",
+                            scale=3,
+                        )
+                        email_sender_input = gr.Textbox(
+                            label="Sender Gmail (Optional for Direct Send)",
+                            placeholder="e.g. doctor@gmail.com",
+                            scale=2,
+                        )
+                        email_pass_input = gr.Textbox(
+                            label="Google App Password (Optional)",
+                            placeholder="16-character App Password",
+                            type="password",
+                            scale=2,
+                        )
+                    with gr.Row():
+                        send_email_now_btn = gr.Button("🚀 Send Official Prescription to Gmail Now", variant="primary", elem_classes=["primary-button"], scale=2)
+                        open_gmail_compose_btn = gr.Button("✉️ Open Gmail Web Compose (1-Click)", elem_classes=["secondary-button"], scale=1)
+                    email_delivery_output = gr.HTML()
+
                 pdf_report = gr.File(label="Download Verified PDF Medical Report (with QR Authentication)", interactive=False)
 
                 with gr.Row():
@@ -1418,15 +1513,24 @@ def build_app(predict_fn, model_files, default_model):
                     key_status_box = gr.HTML('<div style="color: #94a3b8; font-size: 11px;">⚡ Running in Autonomous Copilot mode. Paste key for live Gemini reasoning.</div>')
 
                 with gr.Row():
-                    chip_rec = gr.Button("🎙️ Recording Tips", elem_classes=["robot-chip"])
-                    chip_models = gr.Button("🧠 ML Models", elem_classes=["robot-chip"])
-                    chip_triage = gr.Button("🩺 Result Meaning", elem_classes=["robot-chip"])
-                    chip_wa = gr.Button("💬 WhatsApp Share", elem_classes=["robot-chip"])
+                    chip_rec = gr.Button("🎤 Cough Recording Tips", elem_classes=["chip-btn"])
+                    chip_models = gr.Button("🧠 ML Models & Accuracy", elem_classes=["chip-btn"])
+                    chip_triage = gr.Button("📋 Clinical Triage Meaning", elem_classes=["chip-btn"])
+                    chip_wa = gr.Button("💬 WhatsApp & Email Sharing", elem_classes=["chip-btn"])
 
-                chatbot = gr.Chatbot(label="AEROVA Robot Chat", height=280)
+                chatbot = gr.Chatbot(
+                    label="AEROVA Copilot Conversation",
+                    type="messages",
+                    avatar_images=(None, "https://api.dicebear.com/7.x/bottts/svg?seed=novix"),
+                    height=280,
+                )
                 with gr.Row():
-                    chat_input = gr.Textbox(label="Message Robot", placeholder="Ask anything about cough screening, models, features, WhatsApp...", scale=4)
-                    chat_send = gr.Button("Ask Robot", variant="primary", elem_classes=["primary-button"], scale=1)
+                    chat_input = gr.Textbox(
+                        label="Ask AEROVA Copilot about acoustic screening, symptoms, or reports...",
+                        placeholder="e.g. How does Team NOVIX screen respiratory sounds? Or can I share this to Gmail/WhatsApp?",
+                        scale=4,
+                    )
+                    chat_send = gr.Button("Send →", variant="primary", scale=1)
 
         # =====================================================================
         # EVENT BINDINGS
@@ -1476,15 +1580,15 @@ def build_app(predict_fn, model_files, default_model):
         back_audio.click(lambda: (gr.update(visible=True), gr.update(visible=False)), outputs=[audio_step, context_step])
         back_result.click(lambda: (gr.update(visible=False), gr.update(visible=True)), outputs=[result_step, context_step])
         new_assessment.click(
-            lambda: (gr.update(visible=False), gr.update(visible=True), gr.update(visible=False), "", "", ""),
-            outputs=[result_step, audio_step, context_step, prediction_output, details_output, wa_link_output],
+            lambda: (gr.update(visible=False), gr.update(visible=True), gr.update(visible=False), "", "", "", ""),
+            outputs=[result_step, audio_step, context_step, prediction_output, details_output, wa_link_output, email_delivery_output],
         )
 
         # Execute prediction
         predict_button.click(
             lambda email, *values: _run_prediction(predict_fn, email, *values),
             inputs=[login_email_state, audio_input, file_input, url_input, manual_notes, model_choice, gender, age, cough_detected, respiratory_condition, fever_muscle_pain],
-            outputs=[prediction_output, details_output, quality_output, explanation_chart, model_comparison_output, pdf_report, history_output, context_step, result_step, wa_message_state],
+            outputs=[prediction_output, details_output, quality_output, explanation_chart, model_comparison_output, pdf_report, history_output, context_step, result_step, wa_message_state, report_html_state, report_pdf_state, patient_id_state, email_recipient_input],
         )
 
         # Dynamic WhatsApp link generation on phone input
@@ -1492,6 +1596,18 @@ def build_app(predict_fn, model_files, default_model):
             _generate_whatsapp_link,
             inputs=[wa_phone_input, wa_message_state],
             outputs=[wa_link_output],
+        )
+
+        # Automated Gmail and Email send
+        send_email_now_btn.click(
+            _handle_send_email_now,
+            inputs=[email_recipient_input, email_sender_input, email_pass_input, patient_id_state, report_html_state, report_pdf_state],
+            outputs=[email_delivery_output],
+        )
+        open_gmail_compose_btn.click(
+            _handle_open_gmail_compose,
+            inputs=[email_recipient_input, patient_id_state, wa_message_state],
+            outputs=[email_delivery_output],
         )
 
     return interface
