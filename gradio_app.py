@@ -568,11 +568,16 @@ def main():
         default=int(os.environ.get("PORT", os.environ.get("GRADIO_PORT", "7860"))),
         help="Server port for Gradio",
     )
+    default_host = (
+        "0.0.0.0"
+        if ("RENDER" in os.environ or "PORT" in os.environ or os.environ.get("ENV") == "production")
+        else "127.0.0.1"
+    )
     parser.add_argument(
         "--host",
         type=str,
         default=os.environ.get(
-            "GRADIO_HOST", os.environ.get("GRADIO_SERVER_NAME", "127.0.0.1")
+            "GRADIO_HOST", os.environ.get("GRADIO_SERVER_NAME", default_host)
         ),
         help="Server host for Gradio",
     )

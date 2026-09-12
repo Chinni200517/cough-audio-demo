@@ -1518,12 +1518,7 @@ def build_app(predict_fn, model_files, default_model):
                     chip_triage = gr.Button("📋 Clinical Triage Meaning", elem_classes=["chip-btn"])
                     chip_wa = gr.Button("💬 WhatsApp & Email Sharing", elem_classes=["chip-btn"])
 
-                chatbot = gr.Chatbot(
-                    label="AEROVA Copilot Conversation",
-                    type="messages",
-                    avatar_images=(None, "https://api.dicebear.com/7.x/bottts/svg?seed=novix"),
-                    height=280,
-                )
+                chatbot = gr.Chatbot(label="AEROVA Copilot Conversation", height=280)
                 with gr.Row():
                     chat_input = gr.Textbox(
                         label="Ask AEROVA Copilot about acoustic screening, symptoms, or reports...",
