@@ -7,6 +7,7 @@ from functools import lru_cache
 import re
 import secrets
 from urllib.parse import quote
+import base64
 
 import gradio as gr
 import requests
@@ -1303,26 +1304,42 @@ def _run_prediction(predict_fn, email, *values):
             })
         except Exception as exc:
             report_notice += f'<div class="notice">History could not be saved: {escape(str(exc))}</div>'
+    pdf_base64 = ""
+    pdf_filename = f"aerova-{patient_id.lower()}.pdf"
+    if pdf_path and os.path.exists(pdf_path):
+        try:
+            with open(pdf_path, "rb") as f:
+                pdf_base64 = base64.b64encode(f.read()).decode("ascii")
+        except Exception:
+            pdf_base64 = ""
+    pdf_data_uri = f"data:application/pdf;base64,{pdf_base64}" if pdf_base64 else ""
+
     label = str(metadata.get("label", "Readout"))
     risk = str(metadata.get("risk", "unknown"))
     conf_val = float(metadata.get("confidence", 0))
     conf_pct = conf_val * 100
 
     wa_message = (
-        f"🩺 *AEROVA CLINICAL SCREENING REPORT*\n"
-        f"📋 Patient ID: {patient_id}\n"
-        f"📅 Date: {report_date}\n"
-        f"👤 Profile: {age} yrs · {str(gender).title()}\n"
-        f"🔍 Readout: *{label}*\n"
-        f"⚠️ Risk Level: *{str(risk).title()}*\n"
-        f"🎯 Confidence: *{conf_pct:.1f}%*\n"
-        f"🧠 Model: {model}\n\n"
+        f"📄 *AEROVA CLINICAL SCREENING REPORT (OFFICIAL PDF)*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📋 *Patient ID:* {patient_id}\n"
+        f"📅 *Date:* {report_date}\n"
+        f"👤 *Profile:* {age} yrs · {str(gender).title()}\n"
+        f"🔍 *Acoustic Readout:* *{label}*\n"
+        f"⚠️ *Clinical Risk Tier:* *{str(risk).title()}*\n"
+        f"🎯 *Model Confidence:* *{conf_pct:.1f}%*\n"
+        f"🧠 *Analysis Model:* {model}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📎 *Report Document:* {pdf_filename}\n"
+        f"🔒 *Authentication:* QR-Verified Acoustic Screening\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"ℹ️ Screening aid only. Consult a healthcare professional for clinical diagnosis."
     )
     wa_link = f"https://api.whatsapp.com/send?text={quote(wa_message)}"
+    onclick_share = f"if(window.sendPdfToWhatsApp){{ window.sendPdfToWhatsApp('{escape(patient_id)}', '', '{pdf_data_uri}'); return false; }}" if pdf_data_uri else ""
 
     share_html = f'''<div class="share-actions">
-        <a class="share-action share-action-wa" href="{escape(wa_link)}" target="_blank" rel="noopener noreferrer">💬 Share via WhatsApp</a>
+        <a class="share-action share-action-wa" href="{escape(wa_link)}" target="_blank" rel="noopener noreferrer" onclick="{onclick_share}">📄 Send PDF on WhatsApp</a>
         <a class="share-action" href="{escape(email_link)}">✉️ Open email draft</a>
         <a class="share-action" href="{escape(eml_link)}" download="aerova-{escape(patient_id.lower())}.eml">📥 Download email file (.eml)</a>
         <a class="share-action" href="{escape(html_link)}" download="aerova-{escape(patient_id.lower())}.html">🌐 Download screening report</a>
@@ -1338,6 +1355,8 @@ def _run_prediction(predict_fn, email, *values):
         "risk": risk,
         "confidence": conf_pct,
         "report_text": report_text,
+        "pdf_base64": pdf_base64,
+        "pdf_filename": pdf_filename,
     }
 
     if not extended:
@@ -1374,31 +1393,62 @@ def _dispatch_whatsapp(phone: str, meta: dict) -> str:
     risk = meta.get("risk", "unknown")
     conf = float(meta.get("confidence", 0))
     model = meta.get("model", "AEROVA Extra Trees")
+    pdf_base64 = meta.get("pdf_base64", "")
+    pdf_filename = meta.get("pdf_filename", f"aerova-{patient_id.lower()}.pdf")
+    pdf_data_uri = f"data:application/pdf;base64,{pdf_base64}" if pdf_base64 else ""
 
     wa_text = (
-        f"🩺 *AEROVA CLINICAL SCREENING REPORT*\n"
-        f"📋 Patient ID: {patient_id}\n"
-        f"📅 Date: {date}\n"
-        f"👤 Profile: {age} yrs · {str(gender).title()}\n"
-        f"🔍 Readout: *{label}*\n"
-        f"⚠️ Risk Level: *{str(risk).title()}*\n"
-        f"🎯 Confidence: *{conf:.1f}%*\n"
-        f"🧠 Model: {model}\n\n"
+        f"📄 *AEROVA CLINICAL SCREENING REPORT (OFFICIAL PDF)*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📋 *Patient ID:* {patient_id}\n"
+        f"📅 *Date:* {date}\n"
+        f"👤 *Profile:* {age} yrs · {str(gender).title()}\n"
+        f"🔍 *Acoustic Readout:* *{label}*\n"
+        f"⚠️ *Clinical Risk Tier:* *{str(risk).title()}*\n"
+        f"🎯 *Model Confidence:* *{conf:.1f}%*\n"
+        f"🧠 *Analysis Model:* {model}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📎 *Report Format:* Official Verified PDF Document ({pdf_filename})\n"
+        f"🔒 *Authentication:* QR-Verified Acoustic Analysis\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"ℹ️ Acoustic screening aid. Consult medical professional for diagnosis."
     )
     if clean_digits:
         wa_url = f"https://api.whatsapp.com/send?phone={clean_digits}&text={quote(wa_text)}"
-        target_display = f"for +{clean_digits}"
+        target_display = f"for <b>+{clean_digits}</b>"
     else:
         wa_url = f"https://api.whatsapp.com/send?text={quote(wa_text)}"
         target_display = "(no specific number entered - share to any contact)"
 
-    return f'''<div style="background: rgba(16, 185, 129, 0.14); border: 1px solid #10b981; border-radius: 10px; padding: 14px 18px; margin-top: 12px;">
-        <div style="color: #10b981; font-weight: 700; font-size: 14px; margin-bottom: 4px;">✅ WhatsApp Report Dispatch Ready {target_display}</div>
-        <p style="color: #cbd5e1; font-size: 13px; margin: 0 0 12px 0;">Click the button below to launch WhatsApp with the complete pre-filled assessment report:</p>
-        <a href="{escape(wa_url)}" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 8px; background: #25d366; color: #041620; font-weight: 700; padding: 10px 20px; border-radius: 8px; text-decoration: none; box-shadow: 0 4px 14px rgba(37,211,102,0.35);">
-          <span>💬</span> <span>Open in WhatsApp & Send Report →</span>
+    pdf_download_html = ""
+    if pdf_data_uri:
+        pdf_download_html = f'''
+        <a href="{pdf_data_uri}" download="{escape(pdf_filename)}" style="display: inline-flex; align-items: center; gap: 8px; background: rgba(56, 189, 248, 0.18); border: 1px solid #38bdf8; color: #38bdf8; font-weight: 700; padding: 10px 18px; border-radius: 8px; text-decoration: none;">
+          <span>📥</span> <span>Download PDF Document</span>
         </a>
+        '''
+
+    onclick_js = f"if(window.sendPdfToWhatsApp){{ window.sendPdfToWhatsApp('{escape(patient_id)}', '{escape(clean_digits)}', '{pdf_data_uri}'); return false; }}" if pdf_data_uri else ""
+
+    return f'''<div style="background: rgba(16, 185, 129, 0.14); border: 1px solid #10b981; border-radius: 12px; padding: 16px 20px; margin-top: 14px;">
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+          <span style="font-size: 22px;">📄</span>
+          <span style="color: #10b981; font-weight: 700; font-size: 15px;">PDF Medical Report Ready for WhatsApp {target_display}</span>
+        </div>
+        <p style="color: #cbd5e1; font-size: 13px; margin: 0 0 14px 0;">
+          The official downloadable PDF report with QR verification and acoustic charts is ready to send via WhatsApp:
+        </p>
+        <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
+          <a href="{escape(wa_url)}" target="_blank" rel="noopener noreferrer" onclick="{onclick_js}" style="display: inline-flex; align-items: center; gap: 8px; background: #25d366; color: #041620; font-weight: 800; padding: 11px 22px; border-radius: 8px; text-decoration: none; box-shadow: 0 4px 14px rgba(37,211,102,0.4);">
+            <span>📲</span> <span>Send PDF Report to WhatsApp →</span>
+          </a>
+          {pdf_download_html}
+        </div>
+        <div style="margin-top: 12px; font-size: 12px; color: #94a3b8; line-height: 1.45;">
+          📎 <b>How PDF sending works:</b><br>
+          • <b>Mobile (Android / iPhone):</b> Tapping <i>Send PDF Report to WhatsApp</i> attaches the actual PDF document file directly into WhatsApp.<br>
+          • <b>Desktop:</b> Tapping saves the PDF report and opens WhatsApp Web with the verified report header ready for attachment.
+        </div>
     </div>'''
 
 
@@ -1425,6 +1475,56 @@ def _dispatch_email(target_email: str, meta: dict) -> str:
 def build_app(predict_fn, model_files, default_model):
     captcha_question, captcha_answer = _new_captcha()
     with gr.Blocks(title="AEROVA PRO | AI Respiratory Triage & Robot Copilot") as interface:
+        gr.HTML('''<script>
+window.sendPdfToWhatsApp = async function(patientId, phone, pdfDataUri) {
+  const cleanPhone = (phone || '').replace(/[^\\d]/g, '');
+  const filename = 'AEROVA-Report-' + patientId + '.pdf';
+
+  // 1. Try Native Web Share API with PDF file attachment (mobile devices / compatible OS)
+  if (pdfDataUri && navigator.canShare) {
+    try {
+      const res = await fetch(pdfDataUri);
+      const blob = await res.blob();
+      const file = new File([blob], filename, { type: 'application/pdf' });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: 'AEROVA PDF Report - ' + patientId,
+          text: '📄 AEROVA Verified Medical Screening Report (PDF Document)'
+        });
+        return;
+      }
+    } catch (e) {
+      console.log('Native share bypassed:', e);
+    }
+  }
+
+  // 2. Download PDF file directly to device
+  if (pdfDataUri) {
+    const dl = document.createElement('a');
+    dl.href = pdfDataUri;
+    dl.download = filename;
+    document.body.appendChild(dl);
+    dl.click();
+    document.body.removeChild(dl);
+  }
+
+  // 3. Open WhatsApp chat with pre-filled clinical PDF header
+  const waMsg = encodeURIComponent(
+    '📄 *AEROVA CLINICAL SCREENING REPORT (OFFICIAL PDF)*\\n' +
+    '━━━━━━━━━━━━━━━━━━━━━━\\n' +
+    '📋 *Patient ID:* ' + patientId + '\\n' +
+    '📎 *Attached Document:* ' + filename + '\\n' +
+    '━━━━━━━━━━━━━━━━━━━━━━\\n' +
+    'ℹ️ Verified clinical acoustic screening report in official PDF format.'
+  );
+  const waUrl = cleanPhone
+    ? 'https://api.whatsapp.com/send?phone=' + cleanPhone + '&text=' + waMsg
+    : 'https://api.whatsapp.com/send?text=' + waMsg;
+
+  window.open(waUrl, '_blank');
+};
+</script>''')
         with gr.Column(elem_classes=["login-shell"]) as login_view:
             gr.HTML('''<div class="login-panel">
                 <div class="login-mark">
