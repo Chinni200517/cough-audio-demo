@@ -6,6 +6,9 @@ import time
 from functools import lru_cache
 import re
 import secrets
+import hashlib
+import json
+from pathlib import Path
 from urllib.parse import quote
 
 import gradio as gr
@@ -13,821 +16,131 @@ import requests
 
 from reporting import create_pdf_report, history_dashboard_html, save_assessment
 
+RUNTIME_DIR = Path(__file__).resolve().parent / "runtime"
+USERS_PATH = RUNTIME_DIR / "users.json"
+
 # Global active key store (allows setting via UI, environment, or .env)
 ACTIVE_GEMINI_KEY = (
     os.environ.get("GEMINI_API_KEY", "").strip()
     or os.environ.get("GOOGLE_API_KEY", "").strip()
 )
 
-APP_CSS = """
-:root {
-  --bg-canvas: #060f18;
-  --bg-surface: #0b1f2e;
-  --bg-panel: rgba(11, 31, 46, 0.94);
-  --bg-panel-subtle: rgba(15, 41, 60, 0.88);
-  --ink-bright: #ffffff;
-  --ink: #f1f5f9;
-  --ink-muted: #94a3b8;
-  --ink-subtle: #cbd5e1;
-  --primary: #00e5b0;
-  --primary-deep: #087f78;
-  --primary-glow: rgba(0, 229, 176, 0.35);
-  --cyan-accent: #38bdf8;
-  --cyan-deep: #0284c7;
-  --accent-coral: #f43f5e;
-  --accent-amber: #f59e0b;
-  --success: #10b981;
-  --border-line: rgba(56, 189, 248, 0.28);
-  --border-glow: rgba(0, 229, 176, 0.3);
-  --shadow-pro: 0 24px 60px rgba(2, 10, 18, 0.65), 0 0 1px rgba(56, 189, 248, 0.4);
-}
-
-body, .gradio-container {
-  background: radial-gradient(circle at 10% 10%, #0d273a 0%, #081926 40%, #040c13 100%) !important;
-  color: var(--ink) !important;
-  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif !important;
-  line-height: 1.5;
-}
-
-.gradio-container {
-  max-width: 1320px !important;
-  margin: auto;
-  padding: 20px 20px 50px !important;
-}
-
-.gradio-container .block {
-  border-radius: 20px !important;
-}
-
-/* =========================================================================
-   TEXT VISIBILITY & HIGH CONTRAST (Guarantees all text is 100% visible)
-   ========================================================================= */
-label, label span, .gr-input-label, .block-title, .gr-button {
-  color: #f1f5f9 !important;
-  font-weight: 700 !important;
-  letter-spacing: 0.02em;
-}
-
-input, textarea, select {
-  background-color: rgba(13, 27, 42, 0.95) !important;
-  color: #ffffff !important;
-  border: 1px solid var(--border-line) !important;
-  border-radius: 12px !important;
-  padding: 10px 14px !important;
-  font-size: 14px !important;
-  transition: all 0.2s ease;
-}
-
-input::placeholder, textarea::placeholder {
-  color: #94a3b8 !important;
-  opacity: 0.9 !important;
-}
-
-input:focus, textarea:focus, select:focus {
-  border-color: var(--primary) !important;
-  box-shadow: 0 0 0 3px var(--primary-glow) !important;
-  outline: none !important;
-}
-
-/* =========================================================================
-   PRO ENTERPRISE HERO HEADER
-   ========================================================================= */
-.hero {
-  padding: 30px 34px;
-  border: 1px solid var(--border-line);
-  background: linear-gradient(135deg, rgba(13, 39, 58, 0.96) 0%, rgba(9, 61, 80, 0.94) 50%, rgba(14, 98, 116, 0.92) 100%);
-  border-radius: 24px;
-  color: #ffffff;
-  box-shadow: var(--shadow-pro);
-  position: relative;
-  overflow: hidden;
-}
-
-.hero::after {
-  content: "";
-  position: absolute;
-  top: 0; right: 0; bottom: 0; width: 350px;
-  background: radial-gradient(circle, rgba(0, 229, 176, 0.12) 0%, transparent 70%);
-  pointer-events: none;
-}
-
-.hero-hospital {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  min-height: 165px;
-}
-
-.hero-left {
-  max-width: 70%;
-}
-
-.hero-right {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  align-items: flex-end;
-}
-
-.pro-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  background: rgba(0, 229, 176, 0.15);
-  border: 1px solid var(--primary);
-  color: var(--primary);
-  border-radius: 999px;
-  padding: 5px 14px;
-  font: 800 11px/1 Arial, sans-serif;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
-.pro-pulse {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--primary);
-  box-shadow: 0 0 10px var(--primary);
-  animation: pulse-glow 2s infinite;
-}
-
-@keyframes pulse-glow {
-  0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.35); opacity: 0.7; }
-}
-
-.hero h1 {
-  margin: 12px 0 8px;
-  font-size: clamp(28px, 3.8vw, 48px);
-  line-height: 1.05;
-  font-weight: 800;
-  letter-spacing: -0.03em;
-  color: #ffffff !important;
-}
-
-.hero p {
-  max-width: 680px;
-  color: #e2e8f0;
-  font-size: 15px;
-  line-height: 1.6;
-  margin: 0;
-}
-
-.status-badges {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 10px;
-}
-
-.portal-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  background: rgba(6, 17, 26, 0.6);
-  border: 1px solid var(--border-line);
-  color: #f1f5f9;
-  border-radius: 999px;
-  padding: 8px 14px;
-  font: 700 11px Arial, sans-serif;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.portal-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--primary);
-  box-shadow: 0 0 8px var(--primary);
-}
-
-/* =========================================================================
-   PANELS & WORKSPACE
-   ========================================================================= */
-.panel {
-  background: var(--bg-panel);
-  border: 1px solid var(--border-line);
-  border-radius: 22px;
-  padding: 26px;
-  box-shadow: var(--shadow-pro);
-  backdrop-filter: blur(8px);
-  margin-top: 14px;
-}
-
-.panel-title {
-  font-size: 26px;
-  font-weight: 800;
-  margin: 0 0 6px;
-  color: #ffffff !important;
-  letter-spacing: -0.02em;
-}
-
-.panel-copy {
-  color: #cbd5e1 !important;
-  font-size: 14px;
-  line-height: 1.5;
-  margin: 0 0 20px;
-}
-
-.audio-box {
-  border: 1px dashed var(--cyan-accent) !important;
-  background: rgba(13, 36, 52, 0.75) !important;
-  border-radius: 18px !important;
-  padding: 10px !important;
-}
-
-/* =========================================================================
-   BUTTONS
-   ========================================================================= */
-.primary-button {
-  background: linear-gradient(135deg, #00e5b0 0%, #0284c7 100%) !important;
-  color: #03141f !important;
-  border: 0 !important;
-  border-radius: 14px !important;
-  font: 800 15px Arial, sans-serif !important;
-  padding: 12px 22px !important;
-  box-shadow: 0 10px 25px rgba(0, 229, 176, 0.3) !important;
-  cursor: pointer;
-  transition: all 0.2s ease !important;
-}
-
-.primary-button:hover {
-  filter: brightness(1.1) !important;
-  transform: translateY(-1px);
-  box-shadow: 0 14px 30px rgba(0, 229, 176, 0.45) !important;
-}
-
-.secondary-button {
-  border: 1px solid var(--border-line) !important;
-  color: #38bdf8 !important;
-  border-radius: 14px !important;
-  background: rgba(14, 38, 54, 0.8) !important;
-  font: 700 14px Arial, sans-serif !important;
-  padding: 10px 18px !important;
-  transition: all 0.2s ease !important;
-}
-
-.secondary-button:hover {
-  background: rgba(22, 57, 80, 0.9) !important;
-  border-color: var(--cyan-accent) !important;
-}
-
-.demo-fast-btn {
-  background: linear-gradient(135deg, rgba(56, 189, 248, 0.2) 0%, rgba(0, 229, 176, 0.25) 100%) !important;
-  border: 1px solid var(--primary) !important;
-  color: #f1f5f9 !important;
-  border-radius: 12px !important;
-  font-weight: 700 !important;
-  padding: 10px 16px !important;
-}
-
-/* =========================================================================
-   HIGH-CONTRAST RESULTS & CLINICAL READOUT
-   ========================================================================= */
-.result-card, .details-panel {
-  border-radius: 22px;
-  padding: 26px;
-  background: linear-gradient(145deg, #0a1f2e 0%, #0f2c40 100%) !important;
-  border: 1px solid var(--border-line) !important;
-  box-shadow: var(--shadow-pro) !important;
-  color: #f1f5f9 !important;
-}
-
-.result-card p, .result-card strong, .details-panel p, .details-panel strong,
-.result-card h1, .result-card h2, .details-panel h1, .details-panel h2 {
-  color: #ffffff !important;
-}
-
-.result-card {
-  border-top: 6px solid var(--primary) !important;
-}
-
-.result-kicker, .section-label {
-  color: var(--cyan-accent) !important;
-  font: 800 11px/1.2 Arial, sans-serif;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
-.result-heading {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 14px;
-  font-size: 38px;
-  font-weight: 800;
-  color: #ffffff !important;
-}
-
-.confidence {
-  color: var(--primary) !important;
-  font: 800 14px Arial, sans-serif;
-  background: rgba(0, 229, 176, 0.15);
-  padding: 5px 12px;
-  border-radius: 999px;
-  border: 1px solid var(--primary);
-}
-
-.result-summary {
-  font-size: 16px;
-  line-height: 1.6;
-  color: #e2e8f0 !important;
-  margin: 12px 0 18px;
-}
-
-.meter {
-  height: 10px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 999px;
-  overflow: hidden;
-}
-
-.meter span {
-  display: block;
-  height: 100%;
-  background: linear-gradient(90deg, var(--cyan-accent) 0%, var(--primary) 100%);
-  border-radius: inherit;
-}
-
-.result-meta {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  margin-top: 16px;
-  color: #94a3b8 !important;
-  font-size: 13px;
-}
-
-.risk-pill, .symptom-chip {
-  display: inline-block;
-  border-radius: 999px;
-  padding: 7px 14px;
-  font: 800 11px Arial, sans-serif;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.risk-low { background: #064e3b; color: #a7f3d0 !important; border: 1px solid #10b981; }
-.risk-medium { background: #78350f; color: #fde68a !important; border: 1px solid #f59e0b; }
-.risk-high { background: #881337; color: #fecdd3 !important; border: 1px solid #f43f5e; }
-
-.recommendation {
-  background: rgba(2, 132, 199, 0.18) !important;
-  border-left: 4px solid var(--primary) !important;
-  padding: 16px 18px;
-  border-radius: 14px;
-  margin-top: 14px;
-  color: #f1f5f9 !important;
-}
-
-.recommendation p {
-  color: #f1f5f9 !important;
-  margin: 6px 0 0;
-}
-
-.detail-section {
-  padding: 0 0 18px;
-  margin-bottom: 18px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.detail-section p {
-  color: #cbd5e1 !important;
-}
-
-.symptom-chip {
-  background: rgba(56, 189, 248, 0.15) !important;
-  color: #38bdf8 !important;
-  border: 1px solid rgba(56, 189, 248, 0.3);
-  text-transform: none;
-}
-
-.share-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 20px;
-}
-
-.share-action {
-  display: inline-flex;
-  align-items: center;
-  padding: 10px 16px;
-  border: 1px solid var(--border-line);
-  border-radius: 12px;
-  color: #38bdf8 !important;
-  background: rgba(13, 37, 54, 0.85);
-  font: 700 13px Arial, sans-serif;
-  text-decoration: none !important;
-  transition: all 0.2s ease;
-}
-
-.share-action:hover {
-  background: rgba(23, 58, 83, 0.95);
-  border-color: var(--primary);
-  color: var(--primary) !important;
-}
-
-.safety-alert {
-  background: rgba(245, 158, 11, 0.15);
-  border-left: 4px solid var(--accent-amber);
-  padding: 14px 18px;
-  margin: 16px 0;
-  color: #fde68a !important;
-  font: 14px/1.5 Arial, sans-serif;
-  border-radius: 12px;
-}
-
-.quality-card, .comparison-panel, .history-dashboard {
-  margin: 16px 0;
-  padding: 22px;
-  border: 1px solid var(--border-line);
-  border-radius: 18px;
-  background: rgba(10, 27, 40, 0.92);
-  color: #f1f5f9;
-}
-
-.quality-stats span {
-  padding: 8px 12px;
-  border-radius: 999px;
-  background: rgba(56, 189, 248, 0.14);
-  color: #f1f5f9;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.history-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-  color: #f1f5f9 !important;
-}
-
-.history-table th {
-  color: var(--cyan-accent) !important;
-  text-transform: uppercase;
-  letter-spacing: .06em;
-  padding: 12px 10px;
-  border-bottom: 2px solid var(--border-line);
-}
-
-.history-table td {
-  padding: 12px 10px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  color: #f1f5f9 !important;
-}
-
-/* =========================================================================
-   SIDE ROBOT ASSISTANT (Futuristic Robot Companion)
-   ========================================================================= */
-.robot-dock {
-  position: fixed !important;
-  right: 22px;
-  bottom: 22px;
-  z-index: 1000;
-  width: min(400px, calc(100vw - 36px));
-  margin: 0 !important;
-  background: rgba(6, 18, 28, 0.98) !important;
-  border: 1px solid var(--primary) !important;
-  border-radius: 24px !important;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7), 0 0 20px var(--primary-glow) !important;
-  backdrop-filter: blur(14px);
-  overflow: hidden;
-}
-
-.robot-header {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 14px 18px;
-  background: linear-gradient(135deg, rgba(13, 38, 56, 0.95) 0%, rgba(9, 58, 77, 0.9) 100%);
-  border-bottom: 1px solid var(--border-line);
-}
-
-.robot-avatar-wrap {
-  position: relative;
-  width: 44px;
-  height: 44px;
-  flex-shrink: 0;
-}
-
-.robot-antenna {
-  position: absolute;
-  top: -6px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 2px;
-  height: 8px;
-  background: var(--primary);
-}
-
-.robot-antenna-light {
-  position: absolute;
-  top: -5px;
-  left: -3px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--primary);
-  box-shadow: 0 0 10px var(--primary);
-  animation: pulse-glow 1.5s infinite;
-}
-
-.robot-face {
-  width: 44px;
-  height: 38px;
-  background: linear-gradient(145deg, #0e2b3d, #091c28);
-  border: 2px solid var(--primary);
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: space-around;
-  padding: 0 6px;
-  box-shadow: inset 0 0 8px rgba(0, 229, 176, 0.4);
-}
-
-.robot-eye {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: #00e5b0;
-  box-shadow: 0 0 8px #00e5b0;
-  animation: eye-blink 4s infinite;
-}
-
-@keyframes eye-blink {
-  0%, 96%, 100% { transform: scaleY(1); }
-  98% { transform: scaleY(0.1); }
-}
-
-.robot-meta {
-  flex: 1;
-}
-
-.robot-title {
-  font: 800 15px Arial, sans-serif;
-  color: #ffffff;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.pro-tag {
-  background: var(--primary);
-  color: #041620;
-  font: 900 10px Arial, sans-serif;
-  padding: 2px 6px;
-  border-radius: 6px;
-  text-transform: uppercase;
-}
-
-.robot-sub {
-  font-size: 12px;
-  color: #94a3b8;
-}
-
-.robot-status-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 2px;
-  font-size: 11px;
-  color: var(--primary);
-  font-weight: 700;
-}
-
-.robot-pulse {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--primary);
-  box-shadow: 0 0 6px var(--primary);
-}
-
-.robot-chip-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 8px 12px;
-  background: rgba(6, 17, 26, 0.5);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.robot-chip {
-  padding: 4px 10px !important;
-  border-radius: 999px !important;
-  font-size: 11px !important;
-  background: rgba(56, 189, 248, 0.12) !important;
-  color: #e2e8f0 !important;
-  border: 1px solid rgba(56, 189, 248, 0.3) !important;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.robot-chip:hover {
-  background: rgba(0, 229, 176, 0.2) !important;
-  border-color: var(--primary) !important;
-  color: #ffffff !important;
-}
-
-.key-config-box {
-  background: rgba(9, 24, 36, 0.95);
-  border: 1px dashed var(--border-line);
-  border-radius: 12px;
-  padding: 10px 12px;
-  margin: 6px 12px;
-}
-
-.key-config-note {
-  font-size: 11px;
-  color: #94a3b8;
-  margin-top: 4px;
-}
-
-/* Chatbot container adjustments */
-.robot-dock .chatbot {
-  background: transparent !important;
-  border: none !important;
-}
-
-.robot-dock .message {
-  border-radius: 14px !important;
-  padding: 10px 14px !important;
-  font-size: 13px !important;
-  line-height: 1.5 !important;
-}
-
-/* User message bubble */
-.robot-dock .message.user {
-  background: rgba(2, 132, 199, 0.35) !important;
-  border: 1px solid var(--cyan-accent) !important;
-  color: #ffffff !important;
-}
-
-/* Bot message bubble */
-.robot-dock .message.bot {
-  background: rgba(13, 33, 49, 0.95) !important;
-  border: 1px solid rgba(0, 229, 176, 0.35) !important;
-  border-left: 3px solid var(--primary) !important;
-  color: #f8fafc !important;
-}
-
-/* =========================================================================
-   LOGIN & MISC
-   ========================================================================= */
-.login-shell {
-  max-width: 920px;
-  margin: 48px auto 20px;
-}
-
-.login-panel {
-  background: linear-gradient(145deg, rgba(11, 28, 41, 0.98), rgba(15, 45, 62, 0.98));
-  border: 1px solid var(--border-line);
-  border-radius: 26px;
-  box-shadow: var(--shadow-pro);
-  padding: 34px;
-}
-
-.login-mark {
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
-  font: 800 28px/1 Arial, sans-serif;
-  color: #ffffff;
-}
-
-.login-copy {
-  color: #cbd5e1;
-  font-size: 15px;
-  line-height: 1.6;
-  margin: 12px 0 24px;
-}
-
-.dashboard-metrics {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin: 22px 0 24px;
-}
-
-.metric-item {
-  background: rgba(56, 189, 248, 0.08);
-  border: 1px solid rgba(56, 189, 248, 0.2);
-  border-radius: 16px;
-  padding: 14px 16px;
-}
-
-.metric-label {
-  display: block;
-  font: 800 11px Arial, sans-serif;
-  color: #94a3b8;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.metric-value {
-  display: block;
-  margin-top: 6px;
-  font: 800 26px/1 Arial, sans-serif;
-  color: #ffffff;
-}
-
-.metric-trend {
-  display: inline-block;
-  margin-top: 6px;
-  font: 700 11px Arial, sans-serif;
-  color: var(--primary);
-}
-
-.progress {
-  display: flex;
-  gap: 12px;
-  margin: 24px 0 16px;
-}
-
-.progress-item {
-  flex: 1;
-  border-top: 4px solid rgba(255, 255, 255, 0.15);
-  padding-top: 10px;
-  color: #94a3b8;
-  font: 800 11px Arial, sans-serif;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.progress-item.active {
-  color: var(--primary);
-  border-color: var(--primary);
-}
-
-.captcha-row {
-  display: flex;
-  align-items: flex-end;
-  gap: 10px;
-  margin-top: 14px;
-}
-
-.captcha-question {
-  color: #00e5b0;
-  font: 800 15px Arial, sans-serif;
-  padding: 12px 16px;
-  background: rgba(0, 229, 176, 0.12);
-  border: 1px solid rgba(0, 229, 176, 0.35);
-  border-radius: 12px;
-}
-
-.notice {
-  color: #f87171;
-  font: 600 13px Arial, sans-serif;
-  padding: 10px 0;
-}
-
-.notification {
-  color: var(--primary);
-  font: 600 13px Arial, sans-serif;
-  margin-top: 10px;
-}
-
-@media (max-width: 768px) {
-  .robot-dock { right: 10px; bottom: 10px; width: calc(100vw - 20px); }
-  .hero-hospital { flex-direction: column; align-items: flex-start; }
-  .hero-left, .hero-right { max-width: 100%; width: 100%; }
-  .hero-right { align-items: flex-start; }
-  .panel { padding: 18px; }
-  .result-heading { font-size: 28px; }
-  .dashboard-metrics { grid-template-columns: 1fr; }
-}
-"""
-
-
-def _new_captcha():
-    first = secrets.randbelow(8) + 2
-    second = secrets.randbelow(8) + 2
-    return f"What is {first} + {second}?", str(first + second)
+# ---------------------------------------------------------------------------
+# AUTHENTICATION & SECURE USER STORE (Team NOVIX)
+# ---------------------------------------------------------------------------
+def _load_users() -> dict:
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    if not USERS_PATH.exists():
+        default_users = {
+            "clinician@hospital-aerova.org": {
+                "name": "Dr. Clinician",
+                "password_hash": _hash_password("Doctor@2026!"),
+                "created_at": datetime.now().isoformat(),
+            }
+        }
+        USERS_PATH.write_text(json.dumps(default_users, indent=2), encoding="utf-8")
+        return default_users
+    try:
+        data = json.loads(USERS_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    hashed = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000)
+    return f"{salt}:{hashed.hex()}"
+
+
+def _verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        salt, hashed = stored_hash.split(":", 1)
+        test_hash = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000).hex()
+        return secrets.compare_digest(hashed, test_hash)
+    except Exception:
+        return False
+
+
+def _validate_password_strength(password: str) -> tuple[bool, str]:
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters long."
+    if not re.search(r"[A-Z]", password):
+        return False, "Password must include at least one uppercase letter (A-Z)."
+    if not re.search(r"[a-z]", password):
+        return False, "Password must include at least one lowercase letter (a-z)."
+    if not re.search(r"\d", password):
+        return False, "Password must include at least one number (0-9)."
+    if not re.search(r"[^A-Za-z0-9]", password):
+        return False, "Password must include at least one special character (!@#$%^&*)."
+    return True, "Strong password verified."
+
+
+def _handle_signup(name, email, password, confirm_password):
+    name_text = str(name or "").strip()
+    email_text = str(email or "").strip().lower()
+    pass_text = str(password or "")
+    confirm_text = str(confirm_password or "")
+
+    if not name_text:
+        return gr.update(visible=True), gr.update(visible=False), "", '<div class="notice">⚠️ Please enter your full name or clinician title.</div>'
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email_text):
+        return gr.update(visible=True), gr.update(visible=False), "", '<div class="notice">⚠️ Please enter a valid email address (e.g., doctor@novix.org).</div>'
+    if pass_text != confirm_text:
+        return gr.update(visible=True), gr.update(visible=False), "", '<div class="notice">⚠️ Passwords do not match. Please re-enter both carefully.</div>'
+
+    is_strong, msg = _validate_password_strength(pass_text)
+    if not is_strong:
+        return gr.update(visible=True), gr.update(visible=False), "", f'<div class="notice">⚠️ {msg}</div>'
+
+    users = _load_users()
+    if email_text in users:
+        return gr.update(visible=True), gr.update(visible=False), "", '<div class="notice">⚠️ An account with this email already exists. Please sign in instead.</div>'
+
+    users[email_text] = {
+        "name": name_text,
+        "password_hash": _hash_password(pass_text),
+        "created_at": datetime.now().isoformat(),
+    }
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    temp = USERS_PATH.with_suffix(".tmp")
+    temp.write_text(json.dumps(users, indent=2), encoding="utf-8")
+    os.replace(temp, USERS_PATH)
+
+    welcome_msg = f'<div class="notification">🎉 Welcome, {escape(name_text)}! Your Team NOVIX account is created and ready for triage.</div>'
+    return gr.update(visible=False), gr.update(visible=True), email_text, welcome_msg
 
 
 def _demo_login(email, password, captcha_entry, captcha_answer):
-    email_text = str(email or "").strip()
+    email_text = str(email or "").strip().lower()
     password_text = str(password or "")
-    strong_password = (
-        len(password_text) >= 8
-        and re.search(r"[A-Z]", password_text)
-        and re.search(r"[a-z]", password_text)
-        and re.search(r"\d", password_text)
-        and re.search(r"[^A-Za-z0-9]", password_text)
-    )
-    if (re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email_text)
-            and strong_password and str(captcha_entry or "").strip() == str(captcha_answer or "")):
-        return gr.update(visible=False), gr.update(visible=True), email_text, f'<div class="notification">Signed in. Reports will be addressed to {escape(email_text)}.</div>'
+
     if str(captcha_entry or "").strip() != str(captcha_answer or ""):
-        message = "CAPTCHA answer is incorrect. Refresh the challenge and try again."
-    else:
-        message = "Use a valid email and a password with at least 8 characters, including uppercase, lowercase, number, and special character."
-    return gr.update(visible=True), gr.update(visible=False), "", f'<div class="notice">{message}</div>'
+        return gr.update(visible=True), gr.update(visible=False), "", '<div class="notice">⚠️ CAPTCHA answer is incorrect. Please refresh and try again.</div>'
+
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email_text):
+        return gr.update(visible=True), gr.update(visible=False), "", '<div class="notice">⚠️ Please enter a valid email address.</div>'
+
+    users = _load_users()
+    if email_text in users:
+        if _verify_password(password_text, users[email_text]["password_hash"]):
+            name = users[email_text].get("name", email_text)
+            return gr.update(visible=False), gr.update(visible=True), email_text, f'<div class="notification">✅ Welcome back, {escape(name)}! Signed in securely to Team NOVIX.</div>'
+        else:
+            return gr.update(visible=True), gr.update(visible=False), "", '<div class="notice">⚠️ Incorrect password for this account.</div>'
+
+    # If user not registered yet, check strong password standard for open demo access
+    is_strong, msg = _validate_password_strength(password_text)
+    if is_strong:
+        users[email_text] = {
+            "name": email_text.split("@")[0].title(),
+            "password_hash": _hash_password(password_text),
+            "created_at": datetime.now().isoformat(),
+        }
+        USERS_PATH.write_text(json.dumps(users, indent=2), encoding="utf-8")
+        return gr.update(visible=False), gr.update(visible=True), email_text, f'<div class="notification">✅ Signed in. Reports will be addressed to {escape(email_text)}.</div>'
+
+    return gr.update(visible=True), gr.update(visible=False), "", f'<div class="notice">⚠️ {msg}</div>'
 
 
 def _fast_demo_login():
@@ -837,26 +150,486 @@ def _fast_demo_login():
         gr.update(visible=False),
         gr.update(visible=True),
         demo_email,
-        f'<div class="notification">⚡ Instant Demo Access granted. Ready to screen cough audio!</div>',
+        f'<div class="notification">⚡ Instant Demo Access granted for Team NOVIX. Ready to screen cough audio!</div>',
     )
 
 
+def _new_captcha():
+    first = secrets.randbelow(8) + 2
+    second = secrets.randbelow(8) + 2
+    return f"What is {first} + {second}?", str(first + second)
+
+
+APP_CSS = """
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap');
+
+:root {
+  --bg-canvas: #070c14;
+  --bg-surface: #0e1626;
+  --bg-surface-elevated: #131f36;
+  --bg-panel: rgba(14, 22, 38, 0.95);
+  --ink-bright: #ffffff;
+  --ink: #f8fafc;
+  --ink-muted: #94a3b8;
+  --ink-subtle: #cbd5e1;
+  --novix-primary: #00e5b0;
+  --novix-primary-dark: #059669;
+  --novix-cyan: #38bdf8;
+  --novix-blue: #2563eb;
+  --novix-indigo: #6366f1;
+  --accent-coral: #f43f5e;
+  --accent-amber: #f59e0b;
+  --border-line: rgba(56, 189, 248, 0.22);
+  --border-glow: rgba(0, 229, 176, 0.35);
+  --shadow-lux: 0 20px 50px rgba(0, 0, 0, 0.65), 0 0 1px rgba(56, 189, 248, 0.3);
+}
+
+* { box-sizing: border-box; }
+
+body, .gradio-container {
+  background: radial-gradient(ellipse at 15% 10%, #0f1e36 0%, #080f1e 45%, #040810 100%) !important;
+  color: var(--ink) !important;
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif !important;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+.gradio-container {
+  max-width: 1340px !important;
+  margin: auto;
+  padding: 16px 20px 60px !important;
+}
+
+.gradio-container .block {
+  border-radius: 18px !important;
+}
+
+/* ==========================================================================
+   TEAM NOVIX BRANDING & HERO ENTRANCE
+   ========================================================================== */
+.novix-hero {
+  text-align: center;
+  padding: 24px 20px 10px;
+  max-width: 820px;
+  margin: 0 auto;
+}
+
+.novix-badge-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(0, 229, 176, 0.12);
+  border: 1px solid rgba(0, 229, 176, 0.35);
+  padding: 6px 16px;
+  border-radius: 9999px;
+  margin-bottom: 14px;
+}
+
+.novix-tag {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #00e5b0;
+}
+
+.novix-pulse {
+  width: 8px;
+  height: 8px;
+  background: #00e5b0;
+  border-radius: 50%;
+  box-shadow: 0 0 12px #00e5b0;
+  animation: pulse-ring 2s infinite ease-in-out;
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(0.9); opacity: 0.7; }
+  50% { transform: scale(1.3); opacity: 1; }
+  100% { transform: scale(0.9); opacity: 0.7; }
+}
+
+.novix-title {
+  font-size: clamp(32px, 4.4vw, 54px);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.12;
+  margin: 8px 0 12px;
+  background: linear-gradient(135deg, #ffffff 40%, #7bf5d4 80%, #38bdf8 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.novix-tagline {
+  font-size: clamp(15px, 1.8vw, 18px);
+  font-weight: 500;
+  color: #94a3b8;
+  max-width: 680px;
+  margin: 0 auto 20px;
+  line-height: 1.5;
+}
+
+.novix-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin: 18px 0 24px;
+}
+
+.novix-kpi-card {
+  background: rgba(19, 31, 54, 0.75);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  border-radius: 14px;
+  padding: 14px 16px;
+  backdrop-filter: blur(12px);
+  transition: all 0.25s ease;
+}
+.novix-kpi-card:hover {
+  border-color: rgba(0, 229, 176, 0.45);
+  transform: translateY(-2px);
+}
+.kpi-val {
+  font-size: 22px;
+  font-weight: 800;
+  color: #00e5b0;
+  display: block;
+  font-family: 'JetBrains Mono', monospace;
+}
+.kpi-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-top: 4px;
+}
+
+/* ==========================================================================
+   AUTHENTICATION CARDS & TABS
+   ========================================================================== */
+.auth-container {
+  max-width: 580px;
+  margin: 0 auto 40px;
+  background: rgba(14, 22, 38, 0.92);
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: 22px;
+  padding: 28px 30px;
+  box-shadow: var(--shadow-lux);
+  backdrop-filter: blur(20px);
+}
+
+.auth-notice-rules {
+  background: rgba(19, 31, 54, 0.65);
+  border-left: 3px solid #00e5b0;
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin: 12px 0 16px;
+  font-size: 11px;
+  color: #94a3b8;
+  line-height: 1.5;
+}
+
+.demo-fast-btn {
+  background: linear-gradient(135deg, #00e5b0, #0284c7) !important;
+  color: #041620 !important;
+  font-weight: 800 !important;
+  font-size: 14px !important;
+  border-radius: 12px !important;
+  border: none !important;
+  padding: 14px !important;
+  box-shadow: 0 10px 25px rgba(0, 229, 176, 0.35) !important;
+  cursor: pointer !important;
+  transition: all 0.25s ease !important;
+  width: 100% !important;
+}
+.demo-fast-btn:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 14px 30px rgba(0, 229, 176, 0.5) !important;
+}
+
+.primary-button {
+  background: linear-gradient(135deg, #00e5b0, #059669) !important;
+  color: #041620 !important;
+  font-weight: 800 !important;
+  border-radius: 12px !important;
+  padding: 12px 20px !important;
+  border: none !important;
+  cursor: pointer !important;
+  transition: all 0.25s ease !important;
+}
+.primary-button:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 10px 24px rgba(0, 229, 176, 0.4) !important;
+}
+
+.secondary-button {
+  background: rgba(19, 31, 54, 0.9) !important;
+  color: var(--ink-bright) !important;
+  border: 1px solid rgba(56, 189, 248, 0.3) !important;
+  border-radius: 12px !important;
+  padding: 10px 18px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  transition: all 0.2s ease !important;
+}
+.secondary-button:hover {
+  border-color: #00e5b0 !important;
+  color: #00e5b0 !important;
+}
+
+.captcha-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  margin-top: 10px;
+}
+.captcha-question {
+  color: #00e5b0;
+  font-weight: 800;
+  font-size: 15px;
+  padding: 12px 16px;
+  background: rgba(0, 229, 176, 0.12);
+  border: 1px solid rgba(0, 229, 176, 0.35);
+  border-radius: 12px;
+}
+
+/* ==========================================================================
+   WORKSPACE & STEP PROGRESSION
+   ========================================================================== */
+.workspace-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 22px 28px;
+  background: rgba(14, 22, 38, 0.88);
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 20px;
+  margin-bottom: 22px;
+  backdrop-filter: blur(16px);
+}
+
+.progress-wizard {
+  display: flex;
+  gap: 14px;
+  margin: 18px 0 24px;
+}
+.wizard-step {
+  flex: 1;
+  border-top: 4px solid rgba(255, 255, 255, 0.12);
+  padding-top: 10px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: all 0.3s ease;
+}
+.wizard-step.active {
+  color: #00e5b0;
+  border-color: #00e5b0;
+}
+
+.panel-card {
+  background: rgba(14, 22, 38, 0.92) !important;
+  border: 1px solid rgba(56, 189, 248, 0.25) !important;
+  border-radius: 20px !important;
+  padding: 26px 30px !important;
+  box-shadow: var(--shadow-lux) !important;
+  backdrop-filter: blur(18px);
+}
+
+.panel-title {
+  font-size: 22px;
+  font-weight: 800;
+  color: #ffffff;
+  margin: 0 0 6px;
+  letter-spacing: -0.02em;
+}
+.panel-sub {
+  font-size: 13px;
+  color: #94a3b8;
+  margin-bottom: 20px;
+}
+
+/* ==========================================================================
+   MULTI-CHANNEL REPORT SHARING CENTER (WhatsApp & Email)
+   ========================================================================== */
+.share-center-wrap {
+  background: linear-gradient(135deg, rgba(14, 22, 38, 0.98), rgba(8, 30, 48, 0.95));
+  border: 1px solid rgba(0, 229, 176, 0.4);
+  border-radius: 20px;
+  padding: 24px 28px;
+  margin: 22px 0;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+
+.share-center-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 18px;
+  font-weight: 800;
+  color: #ffffff;
+  margin-bottom: 6px;
+}
+
+.share-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin-top: 16px;
+}
+
+.share-col {
+  background: rgba(19, 31, 54, 0.7);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  border-radius: 14px;
+  padding: 18px 20px;
+}
+
+.share-col-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #38bdf8;
+  margin-bottom: 12px;
+}
+
+.share-action-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none !important;
+  transition: all 0.25s ease;
+  margin: 4px 4px 6px 0;
+}
+
+.link-wa {
+  background: #25d366;
+  color: #032d12 !important;
+}
+.link-wa:hover {
+  background: #1eb956;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(37, 211, 102, 0.4);
+}
+
+.link-email {
+  background: #38bdf8;
+  color: #082f49 !important;
+}
+.link-email:hover {
+  background: #0ea5e9;
+  transform: translateY(-2px);
+}
+
+.link-download {
+  background: rgba(255, 255, 255, 0.1);
+  color: #e2e8f0 !important;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+.link-download:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: #00e5b0;
+  color: #00e5b0 !important;
+}
+
+/* ==========================================================================
+   AI ROBOT COPILOT DOCK
+   ========================================================================== */
+.robot-dock {
+  border-radius: 18px !important;
+  border: 1px solid rgba(0, 229, 176, 0.3) !important;
+  background: rgba(11, 20, 34, 0.95) !important;
+  box-shadow: var(--shadow-lux) !important;
+  overflow: hidden !important;
+}
+
+.robot-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+}
+
+.robot-avatar {
+  width: 44px;
+  height: 44px;
+  background: linear-gradient(135deg, #00e5b0, #0284c7);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  box-shadow: 0 0 16px rgba(0, 229, 176, 0.4);
+}
+
+.robot-meta-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: #ffffff;
+}
+.robot-meta-sub {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.robot-chip {
+  background: rgba(19, 31, 54, 0.85) !important;
+  border: 1px solid rgba(56, 189, 248, 0.25) !important;
+  color: #cbd5e1 !important;
+  font-size: 11px !important;
+  border-radius: 9999px !important;
+  padding: 6px 14px !important;
+  font-weight: 600 !important;
+}
+.robot-chip:hover {
+  border-color: #00e5b0 !important;
+  color: #00e5b0 !important;
+}
+
+.notice {
+  color: #f87171;
+  font-weight: 600;
+  font-size: 12px;
+  padding: 8px 0;
+}
+.notification {
+  color: #00e5b0;
+  font-weight: 600;
+  font-size: 12px;
+  padding: 8px 0;
+}
+
+@media (max-width: 768px) {
+  .novix-kpi-grid { grid-template-columns: 1fr; }
+  .share-grid { grid-template-columns: 1fr; }
+  .workspace-header { flex-direction: column; align-items: flex-start; gap: 12px; }
+}
+"""
+
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 GEMINI_LOG = logging.getLogger("aerova.gemini")
-GEMINI_SYSTEM_INSTRUCTION = """You are AEROVA-BOT, the intelligent clinical AI robot copilot for the AEROVA respiratory acoustic screening platform.
+GEMINI_SYSTEM_INSTRUCTION = """You are AEROVA-BOT, the intelligent clinical AI robot copilot for the AEROVA respiratory acoustic screening platform developed by Team NOVIX (lead developer: Chinni200517).
 Answer questions naturally, clearly, and concisely, like a top-tier medical and acoustic engineering assistant.
 Do not reply with a generic menu unless the user specifically asks what you can do.
 
 Project context:
-- AEROVA is an advanced cough-audio respiratory screening system developed by Chinni200517 on GitHub.
+- AEROVA is an advanced cough-audio respiratory screening system created by Team NOVIX on GitHub.
+- Tagline: "NOVIX · Instant Acoustic Respiratory Screening & AI Triage."
 - It analyzes cough recordings using audio signal processing (MFCC acoustic features, RMS energy, spectral features) and trained machine-learning models (Extra Trees, Random Forest, Logistic Regression, KNN, SVC).
-- It provides Healthy vs Disease screening signals, confidence meters, clinical symptom risk tiers, explainable spectrograms, and downloadable PDF reports with verification QR codes.
+- It provides Healthy vs Disease screening signals, confidence meters, clinical symptom risk tiers, explainable spectrograms, multi-channel report sharing via WhatsApp and Email, and downloadable PDF reports with verification QR codes.
 - It is a screening aid, not a diagnostic certainty. If severe breathing difficulty, blue lips, chest pain, or confusion are reported, urge immediate emergency medical care.
-- Always maintain your identity as AEROVA's Robot Copilot developed by Chinni200517."""
+- Always maintain your identity as AEROVA's Robot Copilot developed by Team NOVIX."""
 
 
 def _message_text(content):
-    """Extract plain text from Gradio's string or structured message content."""
     if isinstance(content, str):
         return content.strip()
     if isinstance(content, dict):
@@ -871,7 +644,6 @@ def _message_text(content):
 
 
 def _gemini_history(history):
-    """Convert Gradio message history into Gemini's user/model conversation roles."""
     contents = []
     for entry in history:
         if not isinstance(entry, dict):
@@ -886,7 +658,6 @@ def _gemini_history(history):
 
 @lru_cache(maxsize=8)
 def _gemini_fallback_models(api_key, cache_period):
-    """Discover text Flash models; cache for a five-minute period per key."""
     models = []
     page_token = None
     for _ in range(3):
@@ -941,7 +712,6 @@ def _gemini_request(api_key, model, payload):
 
 
 def _gemini_answer(question, history, api_key=None):
-    """Return a Gemini answer when configured, without exposing API failures to users."""
     global ACTIVE_GEMINI_KEY
     key = str(api_key or ACTIVE_GEMINI_KEY or os.environ.get("GEMINI_API_KEY", "")).strip()
     if not key:
@@ -1004,15 +774,20 @@ def _safe_gemini_answer(question, history, api_key=None):
     try:
         return _gemini_answer(question, history, api_key=api_key)
     except Exception:
-        GEMINI_LOG.warning("Gemini answer failed unexpectedly; using local help.")
         return None
 
 
 def _local_project_answer(lowered):
-    """Extensive autonomous knowledge engine that answers all questions about AEROVA."""
+    """Extensive autonomous knowledge engine that answers questions about Team NOVIX and AEROVA."""
+    if any(term in lowered for term in ("team novix", "novix", "who made", "developer", "author", "created", "creator")):
+        return (
+            "🚀 **Team NOVIX** engineered the AEROVA respiratory acoustic triage platform. "
+            "Lead maintainer: **Chinni200517** on GitHub (Repository: `cough-audio-demo`). "
+            "Our mission is: *Instant Acoustic Respiratory Screening & AI Triage.*"
+        )
     if any(term in lowered for term in ("what is aerova", "what is this", "about this project", "purpose", "goal")):
         return (
-            "🤖 **AEROVA Pro** is an acoustic respiratory screening and triage system. "
+            "🤖 **AEROVA by Team NOVIX** is an advanced acoustic respiratory screening platform. "
             "It combines digital cough sound analysis (MFCC features) and clinical symptoms with machine-learning "
             "classifiers (Extra Trees, Random Forest, Logistic Regression) to deliver a Healthy vs Disease screening signal. "
             "It is designed for hospital triage aid and is not a medical diagnosis."
@@ -1020,38 +795,29 @@ def _local_project_answer(lowered):
     if any(term in lowered for term in ("how do i use", "how to use", "how does it work", "how does aerova work", "workflow", "steps", "process", "guide")):
         return (
             "🚀 **AEROVA Workflow Guide:**\n"
-            "1. **Sign In:** Use the demo login or click '⚡ Quick Demo Sign-in'.\n"
+            "1. **Sign in:** Use your NOVIX account or click '⚡ Instant Demo Sign-in'.\n"
             "2. **Audio Intake:** Upload or record 1 to 10 seconds of clear coughs via mic or file (WAV, MP3, WebM).\n"
             "3. **Clinical Context:** Provide optional symptoms (fever, respiratory history, age, gender).\n"
-            "4. **AI Triage Readout:** Review the Healthy/Disease prediction, confidence score, spectrogram, model comparison, and download your clinical PDF report."
+            "4. **AI Triage Readout:** Review the Healthy/Disease prediction, confidence score, spectrogram, and share your report to WhatsApp and Email."
+        )
+    if any(term in lowered for term in ("whatsapp", "share to whatsapp", "send whatsapp", "phone number")):
+        return (
+            "📲 **WhatsApp Report Sharing:**\n"
+            "After generating your screening readout, scroll to the **Share & Export Center**. "
+            "Enter any recipient WhatsApp phone number with country code (e.g. `+919876543210`) or click 'Share via WhatsApp (Choose Contact)' "
+            "to send a pre-formatted clinical summary directly into WhatsApp Web or mobile app!"
         )
     if any(term in lowered for term in ("file type", "format", "supported audio", "wav", "webm", "mp3", "ogg", "flac")):
         return (
             "🎵 **Supported Audio Formats:**\n"
-            "AEROVA directly accepts **WAV**, **FLAC**, and **OGG** audio files. "
-            "Browser formats such as **WebM**, **MP3**, and **M4A** are automatically converted to 22,050 Hz PCM WAV using the embedded FFmpeg engine."
-        )
-    if any(term in lowered for term in ("record", "cough clearly", "background noise", "microphone", "tips", "how to record")):
-        return (
-            "🎙️ **Recording Best Practices:**\n"
-            "- Sit in a quiet room with minimal ambient echo.\n"
-            "- Hold your microphone 10–20 cm from your mouth.\n"
-            "- Produce 1 to 3 clear, intentional coughs over 2 to 6 seconds.\n"
-            "- Avoid touching the microphone or blowing directly into it to prevent acoustic clipping."
-        )
-    if any(term in lowered for term in ("feature", "mfcc", "mel", "extract", "sound feature", "frequency", "rms")):
-        return (
-            "🔬 **Acoustic Feature Extraction:**\n"
-            "AEROVA samples cough audio at 22,050 Hz and extracts:\n"
-            "- **40 MFCC features**: 20 Mel-Frequency Cepstral Coefficient means and 20 variances reflecting vocal tract acoustics.\n"
-            "- **RMS Energy**: Measures signal loudness and power variation.\n"
-            "- **Quality metrics**: Signal-to-Noise Ratio (SNR), clipping ratio, and silent duration."
+            "WAV, MP3, WebM, OGG, and FLAC are accepted directly from your microphone or file upload. "
+            "The pipeline standardizes audio to 22,050 Hz mono via FFmpeg."
         )
     if any(term in lowered for term in ("which model", "models", "algorithm", "machine learning", "random forest", "extra trees", "logistic", "knn", "svc")):
         return (
             "🧠 **Machine Learning Architecture:**\n"
-            "AEROVA evaluates multiple scikit-learn models: Extra Trees Classifier, Random Forest, Logistic Regression, Support Vector Classifier (SVC), and KNN. "
-            "The system automatically loads the highest-performing validated model (Extra Trees / Random Forest) to produce the primary triage readout."
+            "Team NOVIX trained and evaluated 10 scikit-learn models: Extra Trees, Random Forest, Gradient Boosting, AdaBoost, Bagging, Decision Tree, Logistic Regression, SVC, SGD, and KNN. "
+            "The system automatically selects the highest-performing validated model to produce the primary triage readout."
         )
     if any(term in lowered for term in ("confidence", "probability", "score", "meaning", "interpretation")):
         return (
@@ -1063,15 +829,9 @@ def _local_project_answer(lowered):
         return (
             "📑 **Reports & Exports:**\n"
             "Following screening, AEROVA automatically prepares:\n"
-            "- A downloadable **PDF Medical Summary** complete with an authentication QR code.\n"
-            "- An **EML email draft** formatted with clinical styling.\n"
-            "- An **HTML report** and logged entry in the Patient History Dashboard."
-        )
-    if any(term in lowered for term in ("patient id", "history", "assessment", "dashboard", "aur")):
-        return (
-            "📋 **Patient ID & History:**\n"
-            "Every triage session receives a unique tokenized identifier (e.g., `AUR-20260911-XXXX`). "
-            "Previous evaluations can be searched and reviewed in the 'Patient history dashboard' accordion."
+            "- Direct **WhatsApp Click-to-Chat sharing** with structured clinical summary.\n"
+            "- An **Email draft** (`mailto:`) and downloadable `.eml` file.\n"
+            "- A downloadable **PDF Medical Summary** complete with an authentication QR code."
         )
     if any(term in lowered for term in ("diagnosis", "doctor", "medical advice", "treatment", "medicine", "cure")):
         return (
@@ -1082,54 +842,19 @@ def _local_project_answer(lowered):
     if any(term in lowered for term in ("symptom", "fever", "fatigue", "sore throat", "shortness of breath", "dyspnea")):
         return (
             "🌡️ **Symptom Context:**\n"
-            "Symptoms provide vital context to acoustic signals. Persistent cough, fever, fatigue, or loss of taste/smell should be monitored closely. "
+            "Symptoms provide vital context to acoustic signals. Persistent cough, fever, fatigue, or dyspnea should be monitored. "
             "Seek emergency care immediately if you experience severe shortness of breath, chest pain, or cyanosis (blue-tinted lips)."
         )
-    if any(term in lowered for term in ("privacy", "secure", "stored", "personal data", "secret", "api key", "gemini key")):
+    if any(term in lowered for term in ("signup", "register", "create account", "login", "password", "strong")):
         return (
-            "🔒 **Privacy & Key Security:**\n"
-            "Screening data is processed locally. API keys (such as Google Gemini) are stored only in runtime session memory or server environment variables, never committed to repository code."
-        )
-    if any(term in lowered for term in ("technology", "built with", "programming", "python", "gradio", "github", "render", "deploy")):
-        return (
-            "💻 **Tech Stack:**\n"
-            "Built with Python 3.10+, Gradio UI, librosa, NumPy, SciPy, scikit-learn, joblib, and ReportLab for PDF generation. "
-            "Hosted on GitHub and deployable on Docker, Hugging Face, or Render."
-        )
-    if any(term in lowered for term in ("who made", "developer", "author", "created", "creator", "chinni")):
-        return (
-            "👨‍💻 **Project Author:**\n"
-            "AEROVA was engineered and maintained by **Chinni200517** on GitHub (Repository: `cough-audio-demo`)."
-        )
-    if any(term in lowered for term in ("dataset", "data", "coughvid", "samples", "training data")):
-        return (
-            "📁 **Dataset Information:**\n"
-            "Trained and evaluated on respiratory acoustic recordings from the COUGHVID crowdsourced dataset, featuring annotated cough audio with expert clinical validation labels."
-        )
-    if any(term in lowered for term in ("hello", "hi", "hey", "good morning", "good evening", "greetings")):
-        return (
-            "🤖 **Hello! I am AEROVA-BOT PRO**, your respiratory acoustic and clinical AI assistant. "
-            "How can I help you today? You can ask about recording your cough, audio features, ML models, screening results, or reports."
-        )
-    if any(term in lowered for term in ("help", "capabilities", "what can you do", "features")):
-        return (
-            "🛠️ **What I Can Do:**\n"
-            "- Guide you through recording and uploading cough audio.\n"
-            "- Explain MFCC features, spectrograms, and acoustic quality.\n"
-            "- Explain ML model predictions (Healthy vs Disease) and accuracy benchmarks.\n"
-            "- Provide PDF report information and clinical triage guidance.\n"
-            "- Connect to Google Gemini for open-ended AI conversation!"
-        )
-    if any(term in lowered for term in ("gemini", "api key", "google gemini", "connect gemini")):
-        return (
-            "✨ **Connecting Google Gemini:**\n"
-            "To unlock live Google Gemini AI, paste your Google AI Studio API key into the '🔑 Configure Google Gemini API Key' field above and click 'Connect Key'!"
+            "🔒 **Account Security:**\n"
+            "Team NOVIX enforces strong passwords: at least 8 characters with uppercase, lowercase, numbers, and special symbols. "
+            "Passwords are protected using salted PBKDF2-SHA256 encryption."
         )
     return None
 
 
 def _chat_response(message, history, user_api_key=""):
-    """Handle chat messages with Google Gemini or smart fallback engine."""
     global ACTIVE_GEMINI_KEY
     if user_api_key and str(user_api_key).strip():
         ACTIVE_GEMINI_KEY = str(user_api_key).strip()
@@ -1174,37 +899,61 @@ def _chat_response(message, history, user_api_key=""):
         )
     elif any(term in lowered for term in ("model", "algorithm", "machine learning")):
         answer = (
-            "🧠 **Trained Models:**\n"
-            "AEROVA evaluates Extra Trees, Random Forest, Logistic Regression, KNN, and SVC models trained on cough audio features."
+            "🧠 **Models in AEROVA:**\n"
+            "AEROVA loads compatible models from output/ and selects the highest validated model for primary screening."
         )
     else:
         answer = (
-            "🤖 **AEROVA-BOT PRO:** I am your respiratory acoustic copilot developed for Chinni200517's AEROVA project. "
-            "I can answer questions about cough analysis, audio features (MFCC), ML models, screening results, and hospital triage.\n\n"
-            "💡 *Tip:* To ask open-ended general questions to live Google Gemini AI, enter your **Google Gemini API Key** in the Robot drawer above!"
+            f"AEROVA is an acoustic respiratory screening platform engineered by Team NOVIX (lead: Chinni200517). "
+            f"I can assist you with audio recording, triage results, ML models, WhatsApp & Email report sharing, or clinical safety guidance."
         )
 
-    history.extend([
-        {"role": "user", "content": question},
-        {"role": "assistant", "content": answer},
-    ])
+    history.append({"role": "user", "content": question})
+    history.append({"role": "assistant", "content": answer})
     return history, ""
 
 
-def _set_gemini_key(key_text):
+def _set_gemini_key(key):
     global ACTIVE_GEMINI_KEY
-    cleaned = str(key_text or "").strip()
-    if not cleaned:
-        ACTIVE_GEMINI_KEY = ""
-        return "", '<div style="color: #94a3b8; font-size: 11px;">⚡ Key cleared. Running in Autonomous Copilot mode.</div>'
-    ACTIVE_GEMINI_KEY = cleaned
-    return cleaned, '<div style="color: #00e5b0; font-size: 11px; font-weight: 700;">🟢 Gemini Key Connected! Live Google Gemini AI is now active.</div>'
+    clean_key = str(key or "").strip()
+    if not clean_key:
+        return "", '<div class="notice">⚠️ Key cleared. Running in autonomous local copilot mode.</div>'
+    ACTIVE_GEMINI_KEY = clean_key
+    return clean_key, '<div class="notification">✅ Gemini API key connected! Live AI reasoning active.</div>'
 
 
-def _continue_audio(audio_data, audio_file, audio_url):
-    if audio_data is not None or audio_file is not None or str(audio_url or "").strip():
-        return gr.update(visible=False), gr.update(visible=True), ""
-    return gr.update(visible=True), gr.update(visible=False), '<div class="notice">Please record or upload audio before moving to the next step.</div>'
+def _continue_audio(audio_path, file_obj, url_text):
+    has_audio = bool(audio_path or file_obj or (url_text and str(url_text).strip()))
+    if not has_audio:
+        return gr.update(visible=True), gr.update(visible=False), '<div class="notice">⚠️ Please record or upload a cough audio sample before continuing.</div>'
+    return gr.update(visible=False), gr.update(visible=True), ""
+
+
+def _build_whatsapp_message(patient_id, label, confidence, risk, model, date, age, gender, summary_text):
+    clean_summary = re.sub(r"<[^>]+>", " ", str(summary_text or "")).strip()
+    clean_summary = re.sub(r"\s+", " ", clean_summary)[:320]
+    return (
+        f"🫁 *NOVIX AEROVA - Respiratory Acoustic Screening Report*\n\n"
+        f"📋 *Patient ID:* {patient_id}\n"
+        f"🩺 *Readout:* {label}\n"
+        f"📊 *Model Confidence:* {confidence * 100:.1f}%\n"
+        f"⚠️ *Risk Assessment:* {risk.upper()}\n"
+        f"👤 *Patient Profile:* {age} yrs · {gender.title()}\n"
+        f"🤖 *Classification Model:* {model}\n"
+        f"🕒 *Triage Timestamp:* {date}\n\n"
+        f"📝 *Summary:* {clean_summary}\n\n"
+        f"⚠️ *Clinical Notice:* This report is an acoustic screening aid developed by Team NOVIX, not a medical diagnosis. Consult a physician for diagnostic confirmation."
+    )
+
+
+def _generate_whatsapp_link(phone_number, wa_message_text):
+    phone_clean = re.sub(r"[^\d+]", "", str(phone_number or "")).lstrip("+")
+    encoded = quote(str(wa_message_text or ""))
+    if phone_clean:
+        link = f"https://wa.me/{phone_clean}?text={encoded}"
+        return f'<a href="{escape(link)}" target="_blank" class="share-action-link link-wa">👉 Click to Open WhatsApp Chat with +{escape(phone_clean)}</a>'
+    link = f"https://wa.me/?text={encoded}"
+    return f'<a href="{escape(link)}" target="_blank" class="share-action-link link-wa">👉 Click to Open WhatsApp (Select Contact)</a>'
 
 
 def _run_prediction(predict_fn, email, *values):
@@ -1221,17 +970,28 @@ def _run_prediction(predict_fn, email, *values):
     age = values[6] if len(values) > 6 else "Not provided"
     model = values[4] if len(values) > 4 else "AEROVA Extra Trees Classifier"
 
+    label = str(metadata.get("label", "Readout"))
+    confidence = float(metadata.get("confidence", 0.85))
+    risk = str(metadata.get("risk", "Low risk"))
+
     report_text = f"AEROVA respiratory screening report | Patient ID: {patient_id}\n" + re.sub(r"<[^>]+>", " ", result + " " + details)
     report_text = re.sub(r"\s+", " ", report_text).strip()[:1800]
-    subject = f"AEROVA Respiratory Report - {patient_id}"
+    subject = f"NOVIX AEROVA Respiratory Report - {patient_id}"
     email_link = f"mailto:{quote(str(email or ''))}?subject={quote(subject)}&body={quote(report_text)}"
+
+    # WhatsApp formatted report
+    wa_message = _build_whatsapp_message(
+        patient_id=patient_id, label=label, confidence=confidence, risk=risk,
+        model=model, date=report_date, age=age, gender=gender, summary_text=details,
+    )
+    wa_default_link = f"https://wa.me/?text={quote(wa_message)}"
 
     email_report = f'''<!doctype html>
 <html><head><meta charset="utf-8"><title>{escape(subject)}</title></head>
 <body style="margin:0;background:#081926;font-family:Arial,sans-serif;color:#f1f5f9;">
   <div style="max-width:760px;margin:24px auto;background:#0d2638;border:1px solid #174b6b;border-radius:18px;overflow:hidden;box-shadow:0 14px 35px rgba(0,0,0,.5);">
     <div style="background:linear-gradient(135deg,#09334c,#008b8b);padding:28px 32px;color:#fff;">
-      <div style="font-size:12px;letter-spacing:2px;text-transform:uppercase;color:#7bf5d4;">AEROVA PRO</div>
+      <div style="font-size:12px;letter-spacing:2px;text-transform:uppercase;color:#7bf5d4;">TEAM NOVIX · AEROVA PRO</div>
       <h1 style="margin:8px 0 4px;font-size:28px;">Respiratory Screening Report</h1>
       <div style="font-size:13px;color:#d8f3f6;">Acoustic triage & clinical follow-up summary</div>
     </div>
@@ -1251,11 +1011,11 @@ def _run_prediction(predict_fn, email, *values):
       <div style="margin-top:16px;">{quality_markup}</div>
       <div style="margin-top:16px;">{comparison_markup}</div>
       <div style="margin-top:22px;padding:16px 18px;background:rgba(245,158,11,0.15);border-left:4px solid #f59e0b;border-radius:10px;color:#fde68a;font-size:13px;line-height:1.55;">
-        <b>Clinical notice:</b> This report is an acoustic screening aid and not a diagnostic certainty. Severe dyspnea, chest pain, confusion, or cyanosis require emergency medical attention.
+        <b>Clinical notice:</b> This report is an acoustic screening aid by Team NOVIX and not a diagnostic certainty. Severe dyspnea, chest pain, confusion, or cyanosis require emergency medical attention.
       </div>
       <table role="presentation" style="width:100%;margin-top:30px;border-top:1px solid #163a52;padding-top:18px;">
         <tr><td style="padding-top:18px;color:#94a3b8;font-size:12px;">Analysed with<br><b style="color:#f1f5f9;">{escape(str(model))}</b></td>
-            <td style="padding-top:18px;text-align:right;color:#94a3b8;font-size:12px;">Digitally generated by<br><b style="color:#f1f5f9;">AEROVA PRO</b></td></tr>
+            <td style="padding-top:18px;text-align:right;color:#94a3b8;font-size:12px;">Digitally generated by<br><b style="color:#f1f5f9;">TEAM NOVIX · AEROVA PRO</b></td></tr>
       </table>
     </div>
   </div>
@@ -1273,6 +1033,7 @@ def _run_prediction(predict_fn, email, *values):
     html_link = f"data:text/html;charset=utf-8,{quote(email_report)}"
     pdf_path = None
     report_notice = ""
+
     if extended and metadata.get("label"):
         try:
             pdf_path = create_pdf_report(
@@ -1283,7 +1044,7 @@ def _run_prediction(predict_fn, email, *values):
                 comparison=metadata.get("comparison", []), chart_path=chart_path,
             )
         except Exception as exc:
-            report_notice = f'<div class="notice">Prediction completed. The downloadable PDF is unavailable: {escape(str(exc))}</div>'
+            report_notice = f'<div class="notice">PDF generated locally is unavailable: {escape(str(exc))}</div>'
         try:
             save_assessment({
                 "patient_id": patient_id, "date": report_date, "label": metadata.get("label", "Readout"),
@@ -1291,94 +1052,164 @@ def _run_prediction(predict_fn, email, *values):
                 "age": age, "gender": str(gender), "model": metadata.get("model", model),
             })
         except Exception as exc:
-            report_notice += f'<div class="notice">History could not be saved: {escape(str(exc))}</div>'
-    share_html = f'''<div class="share-actions">
-        <a class="share-action" href="{escape(email_link)}">✉️ Open email draft</a>
-        <a class="share-action" href="{escape(eml_link)}" download="aerova-{escape(patient_id.lower())}.eml">📥 Download email file (.eml)</a>
-        <a class="share-action" href="{escape(html_link)}" download="aerova-{escape(patient_id.lower())}.html">🌐 Download screening report</a>
-      </div><p class="notification"><b>Report {escape(patient_id)}</b> is ready for {escape(str(email))}.</p>{report_notice}'''
+            report_notice += f'<div class="notice">History save warning: {escape(str(exc))}</div>'
+
+    # Multi-Channel Share Center HTML
+    share_center_html = f'''
+    <div class="share-center-wrap">
+      <div class="share-center-title">
+        <span>📤</span>
+        <span>Multi-Channel Report Share & Export Center</span>
+      </div>
+      <p style="color: #94a3b8; font-size: 13px; margin: 0 0 14px;">Share this clinical screening summary directly to WhatsApp, draft an email, or download verified files.</p>
+      
+      <div class="share-grid">
+        <!-- WhatsApp Channel -->
+        <div class="share-col">
+          <div class="share-col-title">
+            <span style="color: #25d366; font-size: 18px;">💬</span>
+            <span>Share via WhatsApp</span>
+          </div>
+          <p style="color: #cbd5e1; font-size: 12px; margin: 0 0 12px;">Send report directly to patient or doctor on WhatsApp Web or mobile app.</p>
+          <a class="share-action-link link-wa" href="{escape(wa_default_link)}" target="_blank">
+            <span>📲 Open WhatsApp (Choose Contact)</span>
+          </a>
+        </div>
+
+        <!-- Email & Downloads Channel -->
+        <div class="share-col">
+          <div class="share-col-title">
+            <span style="color: #38bdf8; font-size: 18px;">✉️</span>
+            <span>Share via Email & Downloads</span>
+          </div>
+          <p style="color: #cbd5e1; font-size: 12px; margin: 0 0 12px;">Recipient: <b>{escape(str(email or "Clinician"))}</b></p>
+          <div>
+            <a class="share-action-link link-email" href="{escape(email_link)}">✉️ Open email draft</a>
+            <a class="share-action-link link-download" href="{escape(eml_link)}" download="novix-aerova-{escape(patient_id.lower())}.eml">📥 Download email file (.eml)</a>
+            <a class="share-action-link link-download" href="{escape(html_link)}" download="novix-aerova-{escape(patient_id.lower())}.html">🌐 Download web report</a>
+          </div>
+        </div>
+      </div>
+      <p class="notification" style="margin-top: 14px;"><b>Report {escape(patient_id)}</b> created for {escape(str(email))}.</p>
+      {report_notice}
+    </div>
+    '''
+
+    # Note: details + share_center_html ensures contract assertions pass (mailto, Download email file, Healthy)
+    combined_details = details + share_center_html
+
     if not extended:
         return (
-            result,
-            details + share_html,
-            "",
-            None,
-            "",
-            None,
-            history_dashboard_html(),
-            gr.update(visible=False),
-            gr.update(visible=True),
+            result, combined_details, "", None, "", None,
+            history_dashboard_html(), gr.update(visible=False), gr.update(visible=True), wa_message,
         )
     return (
-        result, details + share_html, quality_markup, chart_path, comparison_markup,
-        pdf_path, history_dashboard_html(), gr.update(visible=False), gr.update(visible=True),
+        result, combined_details, quality_markup, chart_path, comparison_markup,
+        pdf_path, history_dashboard_html(), gr.update(visible=False), gr.update(visible=True), wa_message,
     )
 
 
 def build_app(predict_fn, model_files, default_model):
     captcha_question, captcha_answer = _new_captcha()
-    with gr.Blocks(title="AEROVA PRO | AI Respiratory Triage & Robot Copilot") as interface:
+
+    with gr.Blocks(title="Team NOVIX | AEROVA AI Respiratory Screening & Triage") as interface:
+
+        # =====================================================================
+        # STATE STORES
+        # =====================================================================
+        login_email_state = gr.State("")
+        gemini_key_state = gr.State(ACTIVE_GEMINI_KEY)
+        captcha_answer_state = gr.State(captcha_answer)
+        wa_message_state = gr.State("")
+
+        # =====================================================================
+        # 1. ENTRANCE & AUTHENTICATION VIEW (TEAM NOVIX)
+        # =====================================================================
         with gr.Column(elem_classes=["login-shell"]) as login_view:
-            gr.HTML('''<div class="login-panel">
-                <div class="login-mark">
-                  <span style="color: #00e5b0; font-size: 32px;">✦</span>
-                  <span>AEROVA <span style="font-size: 14px; background: #00e5b0; color: #041620; padding: 2px 8px; border-radius: 6px; vertical-align: middle;">PRO v2.5</span></span>
+            gr.HTML('''
+            <div class="novix-hero">
+              <div class="novix-badge-row">
+                <span class="novix-pulse"></span>
+                <span class="novix-tag">Team NOVIX Presents</span>
+              </div>
+              <h1 class="novix-title">AEROVA PRO</h1>
+              <p class="novix-tagline">NOVIX · Instant Acoustic Respiratory Screening & AI Triage.</p>
+
+              <div class="novix-kpi-grid">
+                <div class="novix-kpi-card">
+                  <span class="kpi-val">85.7%</span>
+                  <span class="kpi-label">Acoustic Accuracy</span>
                 </div>
-                <div class="eyebrow" style="margin-top: 18px; color: #38bdf8;">Hospital Respiratory Triage Unit</div>
-                <h1 style="margin: 12px 0 8px; font-size: clamp(26px, 3.2vw, 42px); line-height: 1.1; color: white;">Acoustic Screening & AI Clinical Decision Support</h1>
-                <p class="login-copy">Access the enterprise screening platform for cough sound feature extraction, machine-learning classification, and automated clinical reports.</p>
-                <div class="dashboard-metrics">
-                    <div class="metric-item">
-                        <span class="metric-label">Active Cases</span>
-                        <span class="metric-value">184</span>
-                        <span class="metric-trend">● Live Monitoring</span>
-                    </div>
-                    <div class="metric-item">
-                        <span class="metric-label">Triage Accuracy</span>
-                        <span class="metric-value">84.6%</span>
-                        <span class="metric-trend">Extra Trees Model</span>
-                    </div>
-                    <div class="metric-item">
-                        <span class="metric-label">Emergency Status</span>
-                        <span class="metric-value">Level 2</span>
-                        <span class="metric-trend">ER Watch Active</span>
-                    </div>
+                <div class="novix-kpi-card">
+                  <span class="kpi-val">10 Models</span>
+                  <span class="kpi-label">Ensemble Intelligence</span>
                 </div>
+                <div class="novix-kpi-card">
+                  <span class="kpi-val">&lt; 100ms</span>
+                  <span class="kpi-label">Inference Latency</span>
+                </div>
+              </div>
+            </div>
             ''')
-            with gr.Row():
-                fast_demo_btn = gr.Button("⚡ Instant Demo Sign-in (1-Click)", elem_classes=["demo-fast-btn"])
-            gr.HTML('<div style="text-align: center; color: #94a3b8; font-size: 12px; margin: 12px 0 16px;">— OR SIGN IN WITH CREDENTIALS —</div>')
-            login_email = gr.Textbox(label="Clinician Email", placeholder="doctor@hospital-aerova.org")
-            login_password = gr.Textbox(label="Password", type="password", placeholder="8+ chars with Aa1!")
-            with gr.Row(elem_classes=["captcha-row"]):
-                captcha_prompt = gr.Markdown(f'<div class="captcha-question">{captcha_question}</div>')
-                captcha_entry = gr.Textbox(label="CAPTCHA answer", placeholder="Enter number", scale=2)
-                captcha_refresh = gr.Button("↻", elem_classes=["secondary-button", "captcha-refresh"], scale=0)
-            captcha_answer_state = gr.State(captcha_answer)
-            login_button = gr.Button("Continue Securely", variant="primary", elem_classes=["primary-button"])
-            login_notice = gr.HTML()
-            gr.HTML('<p class="login-note" style="color:#94a3b8; font-size:12px; text-align:center; margin-top:14px;">Reports generated during this session will be addressed to your clinician email.</p></div>')
 
+            with gr.Column(elem_classes=["auth-container"]):
+                with gr.Row():
+                    fast_demo_btn = gr.Button("⚡ Instant Demo Sign-in (1-Click)", elem_classes=["demo-fast-btn"])
+
+                gr.HTML('<div style="text-align: center; color: #94a3b8; font-size: 11px; margin: 18px 0 12px; font-weight: 700; letter-spacing: 0.08em;">— OR USE SECURE CREDENTIALS —</div>')
+
+                with gr.Tabs(elem_classes=["auth-tabs"]):
+                    # Sign In Tab
+                    with gr.Tab("Sign In", id="tab_signin"):
+                        login_email = gr.Textbox(label="Clinician Email", placeholder="doctor@novix-aerova.org")
+                        login_password = gr.Textbox(label="Password", type="password", placeholder="Enter your password")
+                        with gr.Row(elem_classes=["captcha-row"]):
+                            captcha_prompt = gr.Markdown(f'<div class="captcha-question">{captcha_question}</div>')
+                            captcha_entry = gr.Textbox(label="CAPTCHA answer", placeholder="Enter number", scale=2)
+                            captcha_refresh = gr.Button("↻", elem_classes=["secondary-button"], scale=0)
+                        login_button = gr.Button("Sign In to NOVIX", variant="primary", elem_classes=["primary-button"])
+
+                    # Sign Up Tab
+                    with gr.Tab("Create NOVIX Account", id="tab_signup"):
+                        signup_name = gr.Textbox(label="Full Name / Clinician Title", placeholder="e.g. Dr. Alex Morgan")
+                        signup_email = gr.Textbox(label="Work Email Address", placeholder="e.g. alex@hospital.org")
+                        signup_password = gr.Textbox(label="Create Password", type="password", placeholder="8+ chars with Aa1!")
+                        signup_confirm = gr.Textbox(label="Confirm Password", type="password", placeholder="Re-enter password")
+                        gr.HTML('''
+                        <div class="auth-notice-rules">
+                          <strong>Password Requirements:</strong><br>
+                          • At least 8 characters long<br>
+                          • Must contain uppercase (A-Z) and lowercase (a-z)<br>
+                          • Must contain at least one number (0-9)<br>
+                          • Must contain a special character (!@#$%^&*)
+                        </div>
+                        ''')
+                        signup_button = gr.Button("Register & Sign In", variant="primary", elem_classes=["primary-button"])
+
+                auth_notice = gr.HTML()
+                gr.HTML('<p style="color:#64748b; font-size:11px; text-align:center; margin-top:14px;">Protected by Team NOVIX Security. Salted PBKDF2 Encryption.</p>')
+
+        # =====================================================================
+        # 2. MAIN TRIAGE WORKSPACE
+        # =====================================================================
         with gr.Column(visible=False) as workspace:
-            login_email_state = gr.State("")
-            gemini_key_state = gr.State(ACTIVE_GEMINI_KEY)
-
-            gr.HTML('''<header class="hero hero-hospital">
-                <div class="hero-left">
-                    <div class="brand-banner">
-                      <span class="pro-badge"><span class="pro-pulse"></span>PRO ENTERPRISE</span>
-                    </div>
-                    <div class="eyebrow" style="margin-top: 14px; color: #38bdf8;">ACOUSTIC RESPIRATORY SCREENING</div>
-                    <h1>AEROVA Clinical Triage & Acoustic Sound Check</h1>
-                    <p>High-precision respiratory screening from microphone intake to clinical risk readout, powered by audio MFCC feature extraction and trained machine-learning ensembles.</p>
+            gr.HTML('''
+            <header class="workspace-header">
+              <div>
+                <div class="novix-badge-row" style="margin-bottom: 6px;">
+                  <span class="novix-pulse"></span>
+                  <span class="novix-tag">Team NOVIX · Triage Unit</span>
                 </div>
-                <div class="hero-right">
-                    <div class="status-badges">
-                        <span class="portal-chip"><span class="portal-dot"></span>Live Triage Unit</span>
-                        <span class="portal-chip"><span class="portal-dot"></span>Model: Extra Trees</span>
-                    </div>
-                </div>
-            </header>''')
+                <h1 style="margin: 4px 0; font-size: 24px; font-weight: 800; color: #ffffff;">AEROVA Clinical Acoustic Screening</h1>
+                <div style="font-size: 13px; color: #94a3b8;">Transforming cough sound pressure into rapid clinical respiratory risk insights.</div>
+              </div>
+              <div>
+                <span class="portal-chip" style="background: rgba(0, 229, 176, 0.15); border: 1px solid #00e5b0; color: #00e5b0; padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 700;">
+                  ● Live Unit Active
+                </span>
+              </div>
+            </header>
+            ''')
 
             with gr.Accordion("📋 Patient History & Past Assessments", open=False):
                 with gr.Row():
@@ -1386,68 +1217,89 @@ def build_app(predict_fn, model_files, default_model):
                     history_refresh = gr.Button("Search / Refresh", elem_classes=["secondary-button"])
                 history_output = gr.HTML(value=history_dashboard_html())
 
-            gr.HTML('<div class="progress"><div class="progress-item active">01 · Audio Intake</div><div class="progress-item">02 · Clinical Context</div><div class="progress-item">03 · Readout & Reports</div></div>')
+            gr.HTML('''
+            <div class="progress-wizard">
+              <div class="wizard-step active">01 · Audio Intake</div>
+              <div class="wizard-step">02 · Clinical Context</div>
+              <div class="wizard-step">03 · Readout & Sharing</div>
+            </div>
+            ''')
 
-            with gr.Column(elem_classes=["panel"]) as audio_step:
-                gr.HTML('<h2 class="panel-title">1. Bring a Cough Recording</h2><p class="panel-copy">A short, clear 2–6 second cough in a quiet room produces the most reliable acoustic signal.</p>')
-                audio_input = gr.Audio(type="filepath", sources=["upload", "microphone"], label="Upload or Record via Microphone", elem_classes=["audio-box"])
-                file_input = gr.File(file_count="single", label="Or Choose an Audio/Video File (.wav, .mp3, .webm, .ogg)")
-                url_input = gr.Textbox(label="Or Paste a Direct Audio URL", placeholder="https://example.com/cough_sample.wav")
+            # -----------------------------------------------------------------
+            # Step 1: Audio Intake
+            # -----------------------------------------------------------------
+            with gr.Column(elem_classes=["panel-card"]) as audio_step:
+                gr.HTML('<h2 class="panel-title">1. Cough Audio Intake</h2><p class="panel-sub">Record or upload a 2–6 second cough in a quiet room for high acoustic resolution.</p>')
+                audio_input = gr.Audio(type="filepath", sources=["upload", "microphone"], label="Record via Microphone or Upload Audio", elem_classes=["audio-box"])
+                file_input = gr.File(file_count="single", label="Or Choose an Audio File (.wav, .mp3, .webm, .ogg)")
+                url_input = gr.Textbox(label="Or Paste Direct Audio URL", placeholder="https://example.com/cough_sample.wav")
                 audio_notice = gr.HTML()
                 continue_audio = gr.Button("Continue to Clinical Context →", variant="primary", elem_classes=["primary-button"])
 
-            with gr.Column(visible=False, elem_classes=["panel"]) as context_step:
-                gr.HTML('<h2 class="panel-title">2. Add Patient & Clinical Context</h2><p class="panel-copy">Clinical details provide vital context to the acoustic machine-learning model.</p>')
-                manual_notes = gr.Textbox(label="Patient Symptoms & Notes", placeholder="e.g. Dry barking cough for 3 days, mild fatigue, throat irritation...", lines=2)
+            # -----------------------------------------------------------------
+            # Step 2: Clinical Context
+            # -----------------------------------------------------------------
+            with gr.Column(visible=False, elem_classes=["panel-card"]) as context_step:
+                gr.HTML('<h2 class="panel-title">2. Patient & Symptom Context</h2><p class="panel-sub">Clinical context enhances acoustic machine learning triage sensitivity.</p>')
+                manual_notes = gr.Textbox(label="Patient Symptoms & Notes", placeholder="e.g., Dry persistent cough for 4 days, mild fever, throat tickle...", lines=2)
                 with gr.Row():
                     gender = gr.Dropdown(["male", "female", "unknown"], label="Gender", value="unknown")
                     age = gr.Slider(0, 100, step=1, label="Patient Age (Years)", value=30)
-                cough_detected = gr.Slider(0.0, 1.0, step=0.01, label="Cough Detection Confidence Likelihood", value=0.85)
+                cough_detected = gr.Slider(0.0, 1.0, step=0.01, label="Cough Acoustic Confidence", value=0.85)
                 with gr.Row():
                     respiratory_condition = gr.Radio(["true", "false"], label="Pre-existing Respiratory Condition (Asthma / COPD)", value="false")
                     fever_muscle_pain = gr.Radio(["true", "false"], label="Fever or Muscle Body Pain Present?", value="false")
                 model_choice = gr.Dropdown(choices=model_files, value=default_model, label="Analysis Model", visible=False)
-                with gr.Row(elem_classes=["step-actions"]):
+                with gr.Row():
                     back_audio = gr.Button("← Back to Audio Intake", elem_classes=["secondary-button"])
-                    predict_button = gr.Button("⚡ Generate Clinical Triage Readout", variant="primary", elem_classes=["primary-button"])
+                    predict_button = gr.Button("⚡ Run Acoustic Triage Readout", variant="primary", elem_classes=["primary-button"])
 
-            with gr.Column(visible=False, elem_classes=["panel"]) as result_step:
-                gr.HTML('<h2 class="panel-title">3. Clinical Readout & Medical Export</h2><p class="panel-copy">Comprehensive acoustic interpretation, model confidence, and follow-up clinical guidance.</p>')
+            # -----------------------------------------------------------------
+            # Step 3: Triage Readout & Multi-Channel Sharing
+            # -----------------------------------------------------------------
+            with gr.Column(visible=False, elem_classes=["panel-card"]) as result_step:
+                gr.HTML('<h2 class="panel-title">3. Clinical Readout & Multi-Channel Report</h2><p class="panel-sub">Acoustic assessment verdict, spectrogram, model comparison, and direct WhatsApp / Email sharing.</p>')
+
                 prediction_output = gr.HTML()
                 quality_output = gr.HTML()
                 details_output = gr.HTML()
+
                 with gr.Accordion("📊 Explainable Acoustic Spectrogram & Waveform", open=True):
                     explanation_chart = gr.Image(label="Spectrogram Analysis", interactive=False)
-                with gr.Accordion("🧠 Machine Learning Model Comparison", open=False):
+
+                with gr.Accordion("🧠 Machine Learning Model Benchmark Comparison", open=False):
                     model_comparison_output = gr.HTML()
+
+                # Dedicated WhatsApp Sharing Box
+                with gr.Accordion("💬 Share Directly via WhatsApp to Patient or Clinician", open=True):
+                    with gr.Row():
+                        wa_phone_input = gr.Textbox(
+                            label="Recipient WhatsApp Number (with Country Code)",
+                            placeholder="e.g. +91 9876543210 or 14155552671",
+                            scale=3,
+                        )
+                        wa_send_btn = gr.Button("📲 Create WhatsApp Link", variant="primary", elem_classes=["primary-button"], scale=1)
+                    wa_link_output = gr.HTML()
+
                 pdf_report = gr.File(label="Download Verified PDF Medical Report (with QR Authentication)", interactive=False)
-                with gr.Row(elem_classes=["result-actions"]):
+
+                with gr.Row():
                     back_result = gr.Button("← Modify Context", elem_classes=["secondary-button"])
                     new_assessment = gr.Button("Start New Assessment", elem_classes=["secondary-button"])
-                gr.HTML('<div class="safety-alert"><strong>When to seek urgent care:</strong> Severe breathing difficulty, chest pain, confusion, or blue lips require immediate emergency attention.</div>')
-                gr.HTML('<p class="footnote" style="color:#94a3b8; font-size:12px; margin-top:12px;">This application is an acoustic screening aid, not a diagnostic confirmation. Consult a medical professional for clinical diagnosis.</p>')
 
-            # =================================================================
-            # SIDE ROBOT AI COPILOT DOCK
-            # =================================================================
-            with gr.Accordion("🤖 AEROVA-BOT PRO · AI Robot Copilot", open=False, elem_classes=["robot-dock", "chat-panel"]):
+                gr.HTML('<div class="safety-alert" style="background:rgba(244,63,94,0.15); border-left:4px solid #f43f5e; padding:14px 18px; border-radius:10px; color:#fecdd3; margin-top:16px; font-size:13px;"><strong>Urgent Care Warning:</strong> Severe dyspnea, blue lips/cyanosis, acute confusion, or chest pressure require immediate emergency care.</div>')
+                gr.HTML('<p style="color:#64748b; font-size:11px; margin-top:10px;">AEROVA is an acoustic triage tool by Team NOVIX, not a diagnostic confirmation. Consult a medical professional for clinical diagnosis.</p>')
+
+            # -----------------------------------------------------------------
+            # Robot AI Copilot Dock
+            # -----------------------------------------------------------------
+            with gr.Accordion("🤖 AEROVA-BOT PRO · AI Robot Copilot (Team NOVIX)", open=False, elem_classes=["robot-dock"]):
                 gr.HTML('''
                 <div class="robot-header">
-                  <div class="robot-avatar-wrap">
-                    <div class="robot-antenna"><div class="robot-antenna-light"></div></div>
-                    <div class="robot-face">
-                      <div class="robot-eye"></div>
-                      <div style="width: 10px; height: 3px; background: #00e5b0; border-radius: 2px;"></div>
-                      <div class="robot-eye"></div>
-                    </div>
-                  </div>
-                  <div class="robot-meta">
-                    <div class="robot-title">AEROVA-BOT <span class="pro-tag">PRO v2.5</span></div>
-                    <div class="robot-sub">Clinical Acoustic AI Robot Copilot</div>
-                    <div class="robot-status-row">
-                      <span class="robot-pulse"></span>
-                      <span>SYSTEM: <strong>ONLINE</strong></span>
-                    </div>
+                  <div class="robot-avatar">🤖</div>
+                  <div>
+                    <div class="robot-meta-title">AEROVA-BOT PRO <span style="font-size:11px; background:#00e5b0; color:#041620; padding:2px 8px; border-radius:4px;">Team NOVIX</span></div>
+                    <div class="robot-meta-sub">Clinical Acoustic AI Robot Copilot · Live & Online</div>
                   </div>
                 </div>
                 ''')
@@ -1461,68 +1313,83 @@ def build_app(predict_fn, model_files, default_model):
                             scale=3,
                         )
                         save_key_button = gr.Button("Connect Key", elem_classes=["secondary-button"], scale=1)
-                    key_status_box = gr.HTML(
-                        '<div style="color: #94a3b8; font-size: 11px;">⚡ Running in Autonomous Copilot mode. Paste key for live Gemini 2.0 reasoning.</div>'
-                    )
+                    key_status_box = gr.HTML('<div style="color: #94a3b8; font-size: 11px;">⚡ Running in Autonomous Copilot mode. Paste key for live Gemini reasoning.</div>')
 
-                gr.HTML('''
-                <div class="robot-chip-row">
-                  <span style="font-size: 11px; color: #94a3b8; font-weight: 700; margin-right: 4px;">Quick Ask:</span>
-                </div>
-                ''')
                 with gr.Row():
                     chip_rec = gr.Button("🎙️ Recording Tips", elem_classes=["robot-chip"])
                     chip_models = gr.Button("🧠 ML Models", elem_classes=["robot-chip"])
                     chip_triage = gr.Button("🩺 Result Meaning", elem_classes=["robot-chip"])
-                    chip_pdf = gr.Button("📄 PDF Reports", elem_classes=["robot-chip"])
+                    chip_wa = gr.Button("💬 WhatsApp Share", elem_classes=["robot-chip"])
 
                 chatbot = gr.Chatbot(label="AEROVA Robot Chat", height=280)
                 with gr.Row():
-                    chat_input = gr.Textbox(label="Message Robot", placeholder="Ask anything about cough screening, models, features...", scale=4)
+                    chat_input = gr.Textbox(label="Message Robot", placeholder="Ask anything about cough screening, models, features, WhatsApp...", scale=4)
                     chat_send = gr.Button("Ask Robot", variant="primary", elem_classes=["primary-button"], scale=1)
 
-        # Login event bindings
+        # =====================================================================
+        # EVENT BINDINGS
+        # =====================================================================
+
+        # Sign In binding
         login_button.click(
             _demo_login,
             [login_email, login_password, captcha_entry, captcha_answer_state],
-            [login_view, workspace, login_email_state, login_notice],
+            [login_view, workspace, login_email_state, auth_notice],
         )
+
+        # Sign Up binding
+        signup_button.click(
+            _handle_signup,
+            [signup_name, signup_email, signup_password, signup_confirm],
+            [login_view, workspace, login_email_state, auth_notice],
+        )
+
+        # Instant 1-click Demo Sign-in
         fast_demo_btn.click(
             _fast_demo_login,
-            outputs=[login_view, workspace, login_email_state, login_notice],
+            outputs=[login_view, workspace, login_email_state, auth_notice],
         )
+
+        # CAPTCHA refresh
         captcha_refresh.click(lambda: _new_captcha(), outputs=[captcha_prompt, captcha_answer_state])
 
-        # Gemini key saving
+        # Gemini API Key configuration
         save_key_button.click(_set_gemini_key, [gemini_key_input], [gemini_key_state, key_status_box])
 
-        # Chat interaction bindings (supports dynamic key state)
+        # Chat interaction
         chat_send.click(_chat_response, [chat_input, chatbot, gemini_key_state], [chatbot, chat_input])
         chat_input.submit(_chat_response, [chat_input, chatbot, gemini_key_state], [chatbot, chat_input])
 
-        # Quick prompt chip shortcuts
+        # Quick Chat Chips
         chip_rec.click(lambda h, k: _chat_response("What are the best tips for recording a clear cough?", h, k), [chatbot, gemini_key_state], [chatbot, chat_input])
         chip_models.click(lambda h, k: _chat_response("Which machine learning models does AEROVA use and how accurate are they?", h, k), [chatbot, gemini_key_state], [chatbot, chat_input])
         chip_triage.click(lambda h, k: _chat_response("What does a Healthy versus Disease result mean in AEROVA?", h, k), [chatbot, gemini_key_state], [chatbot, chat_input])
-        chip_pdf.click(lambda h, k: _chat_response("How do I export and download a clinical PDF report with QR verification?", h, h), [chatbot, gemini_key_state], [chatbot, chat_input])
+        chip_wa.click(lambda h, k: _chat_response("How does WhatsApp report sharing work in Team NOVIX AEROVA?", h, k), [chatbot, gemini_key_state], [chatbot, chat_input])
 
         # Patient history refresh
         history_refresh.click(history_dashboard_html, [history_search], [history_output])
 
-        # Screening navigation flow
+        # Screening flow navigation
         continue_audio.click(_continue_audio, [audio_input, file_input, url_input], [audio_step, context_step, audio_notice])
         back_audio.click(lambda: (gr.update(visible=True), gr.update(visible=False)), outputs=[audio_step, context_step])
         back_result.click(lambda: (gr.update(visible=False), gr.update(visible=True)), outputs=[result_step, context_step])
         new_assessment.click(
-            lambda: (gr.update(visible=False), gr.update(visible=True), gr.update(visible=False), "", ""),
-            outputs=[result_step, audio_step, context_step, prediction_output, details_output],
+            lambda: (gr.update(visible=False), gr.update(visible=True), gr.update(visible=False), "", "", ""),
+            outputs=[result_step, audio_step, context_step, prediction_output, details_output, wa_link_output],
         )
 
-        # Generate prediction
+        # Execute prediction
         predict_button.click(
             lambda email, *values: _run_prediction(predict_fn, email, *values),
             inputs=[login_email_state, audio_input, file_input, url_input, manual_notes, model_choice, gender, age, cough_detected, respiratory_condition, fever_muscle_pain],
-            outputs=[prediction_output, details_output, quality_output, explanation_chart, model_comparison_output, pdf_report, history_output, context_step, result_step],
+            outputs=[prediction_output, details_output, quality_output, explanation_chart, model_comparison_output, pdf_report, history_output, context_step, result_step, wa_message_state],
+        )
+
+        # Dynamic WhatsApp link generation on phone input
+        wa_send_btn.click(
+            _generate_whatsapp_link,
+            inputs=[wa_phone_input, wa_message_state],
+            outputs=[wa_link_output],
         )
 
     return interface
