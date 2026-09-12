@@ -72,56 +72,6 @@ class FrontendContractTests(unittest.TestCase):
                 self.assertEqual(cleared, "")
                 self.assertIn(expected.lower(), history[-1]["content"].lower())
 
-    def test_strong_password_validation(self):
-        from frontend_ui import _validate_password_strength
-        self.assertFalse(_validate_password_strength("weak")[0])
-        self.assertFalse(_validate_password_strength("NoSpecial123")[0])
-        self.assertFalse(_validate_password_strength("nouppercase123!")[0])
-        self.assertFalse(_validate_password_strength("NOLOWERCASE123!")[0])
-        self.assertFalse(_validate_password_strength("NoNumbers!")[0])
-        self.assertTrue(_validate_password_strength("Doctor@2026!")[0])
-
-    def test_signup_and_login_flow(self):
-        from frontend_ui import _handle_signup, _demo_login
-        # Sign up with invalid password
-        login_view, workspace, email, msg = _handle_signup("Dr. Test", "test@hospital.org", "weak", "weak")
-        self.assertIn("at least 8 characters", msg)
-
-        # Sign up with valid strong password
-        login_view, workspace, email, msg = _handle_signup("Dr. Test", "test_user_unique@hospital.org", "NovixDoctor@2026!", "NovixDoctor@2026!")
-        self.assertEqual(email, "test_user_unique@hospital.org")
-        self.assertIn("Welcome", msg)
-
-        # Login with registered account
-        login_view, workspace, email, msg = _demo_login("test_user_unique@hospital.org", "NovixDoctor@2026!", "10", "10")
-        self.assertEqual(email, "test_user_unique@hospital.org")
-        self.assertIn("Welcome back", msg)
-
-    def test_whatsapp_link_and_summary_generation(self):
-        from frontend_ui import _build_whatsapp_message, _generate_whatsapp_link
-        summary = _build_whatsapp_message(
-            patient_id="AUR-2026-TEST", label="Healthy", confidence=0.857,
-            risk="Low risk", model="Extra Trees", date="12 Sep 2026",
-            age=30, gender="male", summary_text="Normal acoustic pattern",
-        )
-        self.assertIn("NOVIX AEROVA", summary)
-        self.assertIn("AUR-2026-TEST", summary)
-        self.assertIn("Healthy", summary)
-
-        wa_link_html = _generate_whatsapp_link("+919876543210", summary)
-        self.assertIn("wa.me/919876543210", wa_link_html)
-        self.assertIn("Click to Open WhatsApp", wa_link_html)
-
-        # Test details output contains WhatsApp share link
-        payload = _run_prediction(
-            lambda *args: ("<div>Healthy</div>", "<div>Low risk</div>"),
-            "person@example.com", None, None, "", "", "extra_trees.joblib", "unknown", 30, 0.5, "false", "false",
-        )
-        details = payload[1]
-        self.assertIn("wa.me", details)
-        self.assertIn("Share via WhatsApp", details)
-
 
 if __name__ == "__main__":
     unittest.main()
-

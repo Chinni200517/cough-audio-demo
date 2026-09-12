@@ -15,14 +15,10 @@ import soundfile as sf
 from scipy.fft import dct
 from imageio_ffmpeg import get_ffmpeg_exe
 
-from pathlib import Path
-
 from prediction_utils import build_prediction_result
 from frontend_ui import APP_CSS, build_app
 
-BASE_DIR = Path(__file__).resolve().parent
-RUNTIME_DIR = BASE_DIR / "runtime"
-ARTIFACT_DIR = os.path.join(str(BASE_DIR), "output")
+ARTIFACT_DIR = os.path.join(os.path.dirname(__file__), "output")
 PREPROCESSOR_PATH = os.path.join(ARTIFACT_DIR, "preprocessor.joblib")
 N_MFCC = 20
 
@@ -244,25 +240,20 @@ def create_explainability_chart(audio_path, rows, selected_filename):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-    fd, chart_path = tempfile.mkstemp(prefix="aerova-explain-", suffix=".png", dir=RUNTIME_DIR)
+    y, sr, converted_path = read_audio_samples(audio_path, max_seconds=30)
+    fd, chart_path = tempfile.mkstemp(prefix="aerova-explain-", suffix=".png")
     os.close(fd)
-    converted_path = None
     try:
-        y, sr, converted_path = read_audio_samples(audio_path, max_seconds=30)
         fig, axes = plt.subplots(2, 1, figsize=(10, 6), facecolor="#071d2d")
         fig.subplots_adjust(hspace=.42, left=.09, right=.96, top=.92, bottom=.10)
         axes[0].specgram(y, NFFT=1024, Fs=sr, noverlap=768, cmap="magma")
         axes[0].set(title="Cough frequency spectrogram", xlabel="Time (seconds)", ylabel="Frequency (Hz)")
-        selected = next((row for row in rows if row.get("filename") == selected_filename), rows[0] if rows else None)
-        if selected:
-            values = [1 - selected["disease_probability"], selected["disease_probability"]]
-            bars = axes[1].barh(["Healthy", "Disease"], values, color=["#61d8b0", "#ff806f"])
-            axes[1].set_xlim(0, 1); axes[1].set_xlabel("Model probability"); axes[1].set_title(f"Confidence explanation · {selected['model']}")
-            for bar, value in zip(bars, values):
-                axes[1].text(min(value + .02, .92), bar.get_y() + bar.get_height()/2, f"{value*100:.1f}%", va="center", color="white", weight="bold")
-        else:
-            axes[1].axis("off")
+        selected = next((row for row in rows if row["filename"] == selected_filename), rows[0])
+        values = [1 - selected["disease_probability"], selected["disease_probability"]]
+        bars = axes[1].barh(["Healthy", "Disease"], values, color=["#61d8b0", "#ff806f"])
+        axes[1].set_xlim(0, 1); axes[1].set_xlabel("Model probability"); axes[1].set_title(f"Confidence explanation · {selected['model']}")
+        for bar, value in zip(bars, values):
+            axes[1].text(min(value + .02, .92), bar.get_y() + bar.get_height()/2, f"{value*100:.1f}%", va="center", color="white", weight="bold")
         for ax in axes:
             ax.set_facecolor("#102d3c"); ax.tick_params(colors="#d9edf4"); ax.title.set_color("white"); ax.xaxis.label.set_color("#b8d2dc"); ax.yaxis.label.set_color("#b8d2dc")
             for spine in ax.spines.values(): spine.set_color("#416274")
@@ -497,65 +488,17 @@ def predict(audio_data, audio_file, audio_url, manual_notes, model_filename, gen
         risk_class = f"risk-{risk}"
         symptoms = detail_result["symptoms_detected"] or ["No symptoms reported"]
         symptom_chips = "".join(f'<span class="symptom-chip">{escape(str(item))}</span>' for item in symptoms)
-
-        verdict_color = "#0284c7" if label == "Healthy" else "#dc2626"
-        verdict_badge_bg = "#e0f2fe" if label == "Healthy" else "#fee2e2"
-        verdict_icon = "🟢" if label == "Healthy" else "🔴"
-        verdict_sub = "HEALTHY RESPIRATORY SIGNAL DETECTED" if label == "Healthy" else "RESPIRATORY DISEASE / INFECTION DETECTED"
-
-        result_html = f'''<div class="result-card {status_class}" style="border: 2px solid {verdict_color}; background: #ffffff; box-shadow: 0 16px 40px rgba(2, 62, 138, 0.10); border-radius: 22px; padding: 28px 32px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
-              <span class="result-kicker" style="color: #0284c7; font-weight: 800; letter-spacing: 0.14em; font-size: 13px;">📋 FINAL CLINICAL TRIAGE READOUT</span>
-              <span style="background: {verdict_badge_bg}; color: {verdict_color}; border: 1.5px solid {verdict_color}; padding: 6px 16px; border-radius: 20px; font-weight: 800; font-size: 13px; letter-spacing: 0.05em;">{verdict_icon} {escape(risk).upper()} RISK</span>
-            </div>
-
-            <div style="margin: 14px 0 18px;">
-              <div style="font-size: clamp(38px, 5vw, 60px); font-weight: 900; letter-spacing: -0.02em; line-height: 1.1; color: {verdict_color}; text-transform: uppercase;">
-                {escape(label)}
-              </div>
-              <div style="font-size: clamp(16px, 2vw, 20px); font-weight: 800; color: #0a2540; margin-top: 6px;">
-                {verdict_sub} · <span style="color: #0284c7; font-family: monospace;">{confidence * 100:.1f}% Confidence</span>
-              </div>
-            </div>
-
-            <p class="result-summary" style="font-size: 16px; font-weight: 600; color: #1e293b; margin: 14px 0 18px; line-height: 1.55; background: #f0f9ff; padding: 16px 20px; border-radius: 12px; border-left: 5px solid {verdict_color};">
-              <strong style="color: #0a2540;">Clinical Assessment:</strong> {escape(detail_result["final_classification"])}
-            </p>
-
-            <div class="meter" style="height: 12px; border-radius: 6px; background: #e2e8f0; overflow: hidden; margin-bottom: 14px;">
-              <span style="display: block; height: 100%; width: {confidence * 100:.1f}%; background: linear-gradient(90deg, #0284c7, #00b4d8); border-radius: 6px;"></span>
-            </div>
-
-            <div class="result-meta" style="display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #64748b;">
-              <span class="risk-pill {risk_class}" style="font-weight: 800; padding: 4px 12px; border-radius: 6px; background: #f1f5f9; color: #0a2540;">Classification: {escape(label)}</span>
-              <span>Validated Model: <strong style="color: #0a2540;">{escape(os.path.basename(model_path))}</strong></span>
-            </div>
+        result_html = f'''<div class="result-card {status_class}">
+            <div class="result-kicker">SCREENING SIGNAL</div>
+            <div class="result-heading"><span>{escape(label)}</span><span class="confidence">{confidence * 100:.1f}% confidence</span></div>
+            <p class="result-summary">{escape(detail_result["final_classification"])}</p>
+            <div class="meter"><span style="width: {confidence * 100:.1f}%"></span></div>
+            <div class="result-meta"><span class="risk-pill {risk_class}">{escape(risk)} risk</span><span>Model: {escape(os.path.basename(model_path))}</span></div>
         </div>'''
-
-        details_html = f'''<div class="details-panel rx-prescription-card" style="background: #ffffff; border: 1.5px solid rgba(2, 132, 199, 0.25); border-radius: 22px; padding: 28px 32px; margin-top: 20px; box-shadow: 0 16px 40px rgba(2, 62, 138, 0.08);">
-            <div style="display: flex; align-items: center; gap: 14px; border-bottom: 2px solid #e0f2fe; padding-bottom: 16px; margin-bottom: 18px;">
-              <div style="font-size: 38px; font-weight: 900; color: #0077b6; line-height: 1; font-family: serif;">℞</div>
-              <div>
-                <div style="font-size: 12px; font-weight: 800; letter-spacing: 0.14em; color: #0077b6; text-transform: uppercase;">TEAM NOVIX · DIGITAL CLINICAL CARE</div>
-                <div style="font-size: 20px; font-weight: 800; color: #0a2540;">AEROVA Medical Prescription & Clinical Triage Directive</div>
-              </div>
-            </div>
-
-            <div class="detail-section" style="margin-bottom: 16px;">
-              <div class="section-label" style="color: #0077b6; font-weight: 800; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px;">🔬 Acoustic Sound Biomarker</div>
-              <p style="font-size: 15px; font-weight: 600; color: #334155; margin: 0;">{escape(detail_result["sound_classification"])}</p>
-            </div>
-
-            <div class="detail-section" style="margin-bottom: 16px;">
-              <div class="section-label" style="color: #0077b6; font-weight: 800; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px;">🩺 Clinical Context & Symptom Manifestation</div>
-              <p style="font-size: 15px; font-weight: 600; color: #334155; margin: 0 0 8px;">{escape(detail_result["symptom_classification"])}</p>
-              <div class="chips">{symptom_chips}</div>
-            </div>
-
-            <div class="recommendation" style="background: #f0fdf4; border-left: 5px solid #10b981; border-radius: 12px; padding: 18px 20px; margin-top: 18px;">
-              <div class="section-label" style="color: #047857; font-weight: 800; font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px;">💊 Prescription & Clinical Next Steps (Rx Directive)</div>
-              <p style="font-size: 15px; font-weight: 700; line-height: 1.6; color: #064e3b; margin: 0;">{escape(detail_result["recommendation"])}</p>
-            </div>
+        details_html = f'''<div class="details-panel">
+            <div class="detail-section"><div class="section-label">What we heard</div><p>{escape(detail_result["sound_classification"])}</p></div>
+            <div class="detail-section"><div class="section-label">Context signals</div><p>{escape(detail_result["symptom_classification"])}</p><div class="chips">{symptom_chips}</div></div>
+            <div class="recommendation"><div class="section-label">Next best step</div><p>{escape(detail_result["recommendation"])}</p></div>
         </div>'''
         model_files = compatible_model_files(preprocessor, list_available_models())
         comparison_rows = compare_models(X, model_files)
@@ -578,16 +521,11 @@ def main():
         default=int(os.environ.get("PORT", os.environ.get("GRADIO_PORT", "7860"))),
         help="Server port for Gradio",
     )
-    default_host = (
-        "0.0.0.0"
-        if ("RENDER" in os.environ or "PORT" in os.environ or os.environ.get("ENV") == "production")
-        else "127.0.0.1"
-    )
     parser.add_argument(
         "--host",
         type=str,
         default=os.environ.get(
-            "GRADIO_HOST", os.environ.get("GRADIO_SERVER_NAME", default_host)
+            "GRADIO_HOST", os.environ.get("GRADIO_SERVER_NAME", "127.0.0.1")
         ),
         help="Server host for Gradio",
     )
@@ -621,12 +559,7 @@ def main():
         "share": args.share,
         "show_error": True,
         "theme": gr.themes.Base(),
-        "allowed_paths": [
-            str(BASE_DIR),
-            str(RUNTIME_DIR),
-            str(ARTIFACT_DIR),
-            tempfile.gettempdir(),
-        ],
+        "css": APP_CSS,
     }
     try:
         iface.launch(**launch_options)
