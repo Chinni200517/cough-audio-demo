@@ -536,106 +536,106 @@ def diagnose_condition_and_precautions(
     emergency_signs = detect_emergency_signs(notes)
     symptoms = detect_symptoms(notes, respiratory_condition=respiratory_condition, fever_muscle_pain=fever_muscle_pain)
 
-    # 1. Disease condition classification
+    # 1. Disease condition classification based on record and input letters
     if emergency_signs:
-        disease_name = "Critical Respiratory Distress / Emergency"
-        disease_tag = "CRITICAL / EMERGENCY"
+        disease_name = "Disease"
+        disease_tag = "DISEASE"
         severity = "Urgent / Life-Threatening"
         is_disease = True
         risk_level = "high"
-        status_label = "Emergency Care Needed"
+        status_label = "Disease"
         precautions = [
             ("🚨 Call Emergency Services Immediately", "Dial your local emergency number (112 / 911 / 108) without delay. Do not wait for symptoms to subside."),
             ("🫁 Maintain Upright Seated Posture", "Sit upright leaning slightly forward (tripod position) to maximize thoracic lung expansion."),
-            ("💨 Administer Oxygen / Rescue Bronchodilator", "If prescribed, administer 2-4 puffs of emergency rescue inhaler (Salbutamol) via spacer."),
+            ("💨 Administer Oxygen / Rescue Bronchodilator", "If prescribed, administer emergency rescue inhaler (Salbutamol) via spacer."),
             ("🚫 Avoid Heavy Physical Movement", "Remain completely still and calm to minimize cellular oxygen consumption."),
         ]
     elif fever_muscle_pain and ("covid" in text or "fever" in text or "chills" in text or prediction == 1):
-        disease_name = "COVID-19 / Acute Viral Respiratory Syndrome"
-        disease_tag = "VIRAL RESPIRATORY INFECTION"
-        severity = "Severe / Contagious"
+        disease_name = "Disease"
+        disease_tag = "DISEASE"
+        severity = "Elevated Risk"
         is_disease = True
         risk_level = "high"
-        status_label = "Disease Signal: COVID-19 / Acute Viral"
+        status_label = "Disease"
         precautions = [
-            ("😷 Strict Airborne Isolation & N95 Masking", "Isolate in a well-ventilated room. Wear a properly fitted N95/FFP2 respirator around others."),
+            ("😷 Strict Isolation & Masking", "Isolate in a well-ventilated room. Wear a properly fitted N95/FFP2 respirator around others."),
             ("📊 Continuous Pulse Oximetry (SpO2)", "Check peripheral blood oxygen saturation every 4 hours. If SpO2 drops below 94%, seek urgent hospital evaluation."),
             ("🌡️ Antipyretic & Fever Protocol", "Monitor body temperature. Maintain adequate hydration with electrolyte-balanced fluids (2.5L–3.0L daily)."),
-            ("💧 Saline Steam Inhalation", "Perform warm steam inhalation with saline twice daily to soothe irritated bronchial mucous membranes."),
-            ("👨‍⚕️ Clinical RT-PCR Confirmation", "Schedule a confirmatory rapid antigen or RT-PCR diagnostic test within 24 hours."),
+            ("💧 Saline Steam Inhalation", "Perform warm steam inhalation twice daily to soothe irritated bronchial mucous membranes."),
+            ("👨‍⚕️ Clinical Consultation", "Schedule an evaluation with a certified medical doctor for confirmatory clinical testing."),
         ]
     elif respiratory_condition or any(w in text for w in ["asthma", "wheez", "whistle", "tight", "dyspnea"]):
-        disease_name = "Bronchial Asthma & Asthmatic Wheeze Exacerbation"
-        disease_tag = "BRONCHIAL HYPERREACTIVITY"
-        severity = "Moderate to Severe Obstruction"
+        disease_name = "Disease"
+        disease_tag = "DISEASE"
+        severity = "Moderate to High Risk"
         is_disease = True
         risk_level = "high" if probability >= 0.70 else "medium"
-        status_label = "Disease Signal: Asthmatic Wheeze"
+        status_label = "Disease"
         precautions = [
-            ("🫁 Use Prescribed Bronchodilator Inhaler", "Take 2 puffs of your prescribed beta-2 agonist (Salbutamol/Albuterol) with a spacer as directed by your pulmonologist."),
+            ("🫁 Use Prescribed Bronchodilator Inhaler", "Take your prescribed beta-2 agonist inhaler with a spacer as directed by your physician."),
             ("🚫 Eliminate Environmental Triggers", "Stay away from cold air, vehicle exhaust smog, active/passive cigarette smoke, dust mites, and pet dander."),
-            ("📈 Monitor Peak Expiratory Flow (PEF)", "Record PEF meter readings. A drop below 80% of personal best indicates bronchial constriction."),
-            ("🪑 Elevated Sleeping Elevation", "Sleep with head and chest elevated at 30–45 degrees to prevent nocturnal airway collapse."),
-            ("⚠️ Emergency Red Flags", "If wheezing fails to respond to rescue inhaler after 15 minutes, proceed immediately to acute urgent care."),
+            ("📈 Monitor Peak Expiratory Flow (PEF)", "Record PEF meter readings if available. A drop below 80% of personal best indicates airway constriction."),
+            ("🪑 Elevated Sleeping Elevation", "Sleep with head and chest elevated at 30–45 degrees to prevent nocturnal airway obstruction."),
+            ("⚠️ Emergency Red Flags", "If wheezing or breathlessness fails to respond to rescue inhaler after 15 minutes, proceed immediately to urgent care."),
         ]
     elif any(w in text for w in ["phlegm", "productive", "mucus", "green", "yellow", "pneumonia"]) or (fever_muscle_pain and age > 50):
-        disease_name = "Pneumonia / Lower Respiratory Tract Infection"
-        disease_tag = "LOWER AIRWAY INFECTION"
-        severity = "Moderate to High Clinical Severity"
+        disease_name = "Disease"
+        disease_tag = "DISEASE"
+        severity = "Moderate to High Risk"
         is_disease = True
         risk_level = "high"
-        status_label = "Disease Signal: Pneumonia / Lower Airway"
+        status_label = "Disease"
         precautions = [
-            ("🏥 Urgent Pulmonologist Chest Auscultation", "Undergo comprehensive physical chest examination; a chest X-ray or high-resolution CT may be required."),
+            ("🏥 Pulmonologist / Physician Chest Auscultation", "Undergo comprehensive physical chest examination; a chest X-ray or evaluation may be required."),
             ("💧 Airway Clearance & Mucolytics", "Maintain high warm fluid intake to thin bronchial mucus secretions. Avoid suppressing productive coughs."),
             ("📊 Monitor SpO2 and Respiratory Rate", "A resting respiratory rate exceeding 24 breaths/minute indicates increased work of breathing."),
             ("💊 Complete Full Prescribed Medication Course", "Take all prescribed medications exactly on schedule. Do not self-administer over-the-counter antibiotics."),
-            ("🛌 Postural Drainage Rest", "Rest in prone or side-lying positions to assist alveolar perfusion and ventilation matching."),
+            ("🛌 Rest & Hydration", "Rest in prone or side-lying positions to assist alveolar perfusion and ventilation matching."),
         ]
     elif age >= 60 and (respiratory_condition or any(w in text for w in ["copd", "smoker", "chronic", "emphysema"])):
-        disease_name = "COPD / Chronic Airflow Limitation Flare"
-        disease_tag = "CHRONIC OBSTRUCTIVE PULMONARY"
-        severity = "Chronic Moderate-High Risk"
+        disease_name = "Disease"
+        disease_tag = "DISEASE"
+        severity = "Moderate to High Risk"
         is_disease = True
         risk_level = "high" if probability >= 0.65 else "medium"
-        status_label = "Disease Signal: COPD / Airway Limitation"
+        status_label = "Disease"
         precautions = [
-            ("🫁 Dual Bronchodilator Maintenance", "Continue regular long-acting muscarinic and beta-agonist inhalers as scheduled."),
+            ("🫁 Dual Bronchodilator Maintenance", "Continue regular prescribed maintenance inhalers as scheduled."),
             ("🌬️ Pursed-Lip Breathing Technique", "Inhale through nose for 2 seconds, exhale slowly through pursed lips for 4 seconds to reduce air trapping."),
-            ("😷 Urban Particulate Protection", "Avoid outdoor exposure during peak traffic hours; wear an N95 mask in areas with AQI > 100."),
-            ("📊 Baseline SpO2 Target Calibration", "For known COPD, maintain oxygen saturation between 88%–92% unless otherwise directed by your physician."),
-            ("👨‍⚕️ Pulmonology Follow-Up", "Schedule routine spirometry evaluation to evaluate FEV1/FVC ratios."),
+            ("😷 Urban Particulate Protection", "Avoid outdoor exposure during peak traffic hours; wear an N95 mask in areas with high air pollution."),
+            ("📊 Baseline SpO2 Monitoring", "Maintain resting oxygen saturation monitoring as advised by your healthcare provider."),
+            ("👨‍⚕️ Pulmonology Follow-Up", "Schedule routine spirometry evaluation to evaluate airway function."),
         ]
     elif any(w in text for w in ["throat", "sore", "cold", "flu", "hoarse", "barking", "dry"]):
-        disease_name = "Acute Tracheobronchitis / Upper Airway Irritation"
-        disease_tag = "RESPIRATORY TRACT INFLAMMATION"
+        disease_name = "Disease"
+        disease_tag = "DISEASE"
         severity = "Mild to Moderate"
         is_disease = True
         risk_level = "medium"
-        status_label = "Disease Signal: Acute Bronchial Irritation"
+        status_label = "Disease"
         precautions = [
             ("💧 Warm Hydration Therapy", "Drink warm herbal infusions, ginger water, or warm honey-lemon water to lubricate pharyngeal tissues."),
-            ("💨 Room Air Humidification", "Use a cool-mist ultrasonic humidifier in your room (target 45%–55% ambient relative humidity)."),
+            ("💨 Room Air Humidification", "Use a cool-mist humidifier in your room (target 45%–55% ambient relative humidity)."),
             ("🚫 Voice Rest & Throat Protection", "Avoid excessive talking or vocal straining; do not ingest cold refrigerated liquids."),
             ("🧂 Warm Saline Gargles", "Gargle with warm salt water (1/2 tsp salt in 1 glass water) 3 to 4 times daily."),
             ("🔍 Symptom Tracking", "If cough persists beyond 10 days or becomes painful with breathing, consult a physician."),
         ]
-    elif prediction == 1 or probability >= 0.52:
-        disease_name = "Abnormal Bioacoustic Respiratory Sound Detected"
-        disease_tag = "ACOUSTIC BIOMARKER ANOMALY"
-        severity = "Moderate Respiratory Alert"
+    elif prediction == 1 or probability >= 0.50:
+        disease_name = "Disease"
+        disease_tag = "DISEASE"
+        severity = "Moderate Risk"
         is_disease = True
         risk_level = "high" if probability >= 0.70 else "medium"
-        status_label = "Disease Signal: Abnormal Cough Acoustics"
+        status_label = "Disease"
         precautions = [
-            ("🩺 Clinical Pulmonology Consultation", "The bioacoustic waveform demonstrates turbulence and harmonic deviation characteristic of respiratory irritation."),
+            ("🩺 Clinical Pulmonology Consultation", "The bioacoustic waveform demonstrates turbulence characteristic of respiratory irritation."),
             ("📊 Check Baseline Oxygen & Temperature", "Measure resting oxygen saturation and monitor for fever spikes over the next 48 hours."),
             ("😷 Wear Face Mask in Public", "Use a face mask in shared spaces until clinical evaluation rules out contagious infection."),
             ("💧 Optimize Airway Hydration", "Drink plenty of warm water and avoid dry, dusty, or unventilated environments."),
         ]
     else:
-        disease_name = "Healthy Respiratory Profile / Normal Breath Sounds"
-        disease_tag = "HEALTHY BASELINE"
+        disease_name = "Healthy"
+        disease_tag = "HEALTHY"
         severity = "Normal / Non-Pathological"
         is_disease = False
         risk_level = "low"

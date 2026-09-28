@@ -483,15 +483,14 @@ def predict(audio_data, audio_file, audio_url, manual_notes, model_filename, gen
         disease_name = detail_result.get("disease_name", "Abnormal Respiratory Pattern")
         is_disease = (prediction == 1 or detail_result["prediction"] == 1 or detail_result.get("status") in ["urgent", "covid-19"])
 
-        if detail_result["status"] == "urgent":
-            label = "Emergency Care Needed"
+        if is_disease:
+            label = "Disease"
             status_class = "status-review"
-        elif is_disease:
-            label = f"Disease Detected · {disease_name}"
-            status_class = "status-review"
+            summary_text = "Possible Disease"
         else:
-            label = "Healthy Respiration"
+            label = "Healthy"
             status_class = "status-healthy"
+            summary_text = "Healthy / normal"
 
         risk = str(detail_result["risk_level"]).lower()
         risk_class = f"risk-{risk}"
@@ -500,7 +499,7 @@ def predict(audio_data, audio_file, audio_url, manual_notes, model_filename, gen
         result_html = f'''<div class="result-card {status_class}">
             <div class="result-kicker">CLINICAL SCREENING SIGNAL</div>
             <div class="result-heading"><span>{escape(label)}</span><span class="confidence">{confidence * 100:.1f}% confidence</span></div>
-            <p class="result-summary">{escape(detail_result["final_classification"])}</p>
+            <p class="result-summary">{escape(summary_text)}</p>
             <div class="meter"><span style="width: {confidence * 100:.1f}%"></span></div>
             <div class="result-meta"><span class="risk-pill {risk_class}">{escape(risk)} risk</span><span>Model: {escape(os.path.basename(model_path))}</span></div>
         </div>'''
