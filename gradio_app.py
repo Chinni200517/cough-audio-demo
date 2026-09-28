@@ -474,40 +474,29 @@ def predict(audio_data, audio_file, audio_url, manual_notes, model_filename, gen
 
         detail_result = build_prediction_result(
             prediction=prediction,
-            probability=covid_proba,
+            probability=confidence,
             notes=str(manual_notes or ""),
             respiratory_condition=parse_bool(respiratory_condition),
             fever_muscle_pain=parse_bool(fever_muscle_pain),
-            age=float(age) if age is not None else 35.0,
         )
-        disease_name = detail_result.get("disease_name", "Abnormal Respiratory Pattern")
-        is_disease = (prediction == 1 or detail_result["prediction"] == 1 or detail_result.get("status") in ["urgent", "covid-19"])
-
-        if is_disease:
-            label = "Disease"
-            status_class = "status-review"
-            summary_text = "Possible Disease"
-        else:
-            label = "Healthy"
-            status_class = "status-healthy"
-            summary_text = "Healthy / normal"
+        label = "Urgent review" if detail_result["status"] == "urgent" else ("Disease" if prediction == 1 else "Healthy")
 
         risk = str(detail_result["risk_level"]).lower()
+        status_class = "status-healthy" if label == "Healthy" else "status-review"
         risk_class = f"risk-{risk}"
         symptoms = detail_result["symptoms_detected"] or ["No symptoms reported"]
         symptom_chips = "".join(f'<span class="symptom-chip">{escape(str(item))}</span>' for item in symptoms)
         result_html = f'''<div class="result-card {status_class}">
-            <div class="result-kicker">CLINICAL SCREENING SIGNAL</div>
+            <div class="result-kicker">SCREENING SIGNAL</div>
             <div class="result-heading"><span>{escape(label)}</span><span class="confidence">{confidence * 100:.1f}% confidence</span></div>
-            <p class="result-summary">{escape(summary_text)}</p>
+            <p class="result-summary">{escape(detail_result["final_classification"])}</p>
             <div class="meter"><span style="width: {confidence * 100:.1f}%"></span></div>
             <div class="result-meta"><span class="risk-pill {risk_class}">{escape(risk)} risk</span><span>Model: {escape(os.path.basename(model_path))}</span></div>
         </div>'''
         details_html = f'''<div class="details-panel">
-            <div class="detail-section"><div class="section-label">Acoustic Biomarkers & Breath Sounds</div><p>{escape(detail_result["sound_classification"])}</p></div>
-            <div class="detail-section"><div class="section-label">Clinical Context & Symptom Presentation</div><p>{escape(detail_result["symptom_classification"])}</p><div class="chips">{symptom_chips}</div></div>
-            <div class="recommendation"><div class="section-label">Pulmonologist Recommendation</div><p>{escape(detail_result["recommendation"])}</p></div>
-            {detail_result.get("precautions_html", "")}
+            <div class="detail-section"><div class="section-label">What we heard</div><p>{escape(detail_result["sound_classification"])}</p></div>
+            <div class="detail-section"><div class="section-label">Context signals</div><p>{escape(detail_result["symptom_classification"])}</p><div class="chips">{symptom_chips}</div></div>
+            <div class="recommendation"><div class="section-label">Next best step</div><p>{escape(detail_result["recommendation"])}</p></div>
         </div>'''
         model_files = compatible_model_files(preprocessor, list_available_models())
         comparison_rows = compare_models(X, model_files)
