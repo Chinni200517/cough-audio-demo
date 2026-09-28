@@ -469,14 +469,12 @@ def predict(audio_data, audio_file, audio_url, manual_notes, model_filename, gen
             model = joblib.load(model_path)
         # Some saved ensemble models retain n_jobs=-1. On restricted Windows
         # hosts that makes joblib create worker pipes and raises WinError 5.
-        if hasattr(model, "n_jobs"):
-            model.n_jobs = 1
         prediction, confidence, covid_proba = model_probability(model, X)
         healthy_proba = 1.0 - covid_proba
 
         detail_result = build_prediction_result(
             prediction=prediction,
-            probability=confidence,
+            probability=covid_proba,
             notes=str(manual_notes or ""),
             respiratory_condition=parse_bool(respiratory_condition),
             fever_muscle_pain=parse_bool(fever_muscle_pain),
