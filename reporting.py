@@ -82,6 +82,131 @@ def load_history() -> list[dict]:
         return []
 
 
+def clear_history() -> bool:
+    """Securely purge stored session assessments."""
+    target_dir = get_runtime_dir()
+    history_path = target_dir / "assessment_history.json"
+    fallback_path = Path(tempfile.gettempdir()) / "assessment_history.json"
+    with _HISTORY_LOCK:
+        try:
+            if history_path.exists():
+                history_path.write_text("[]", encoding="utf-8")
+            if fallback_path.exists():
+                fallback_path.write_text("[]", encoding="utf-8")
+            return True
+        except Exception:
+            return False
+
+
+def journey_dashboard_html(range_days: int = 7) -> str:
+    """Render authentic longitudinal respiratory journey from recorded assessments."""
+    history = load_history()
+    if not history:
+        return '''<div style="background: rgba(8, 22, 36, 0.7); border: 1px dashed rgba(56, 189, 248, 0.25); border-radius: 20px; padding: 40px 24px; text-align: center;">
+          <div style="font-size: 48px; margin-bottom: 12px;">📈</div>
+          <h3 style="color: #ffffff; font-size: 19px; font-weight: 800; margin-bottom: 6px;">Your Respiratory Journey</h3>
+          <p style="color: #94a3b8; font-size: 14px; max-width: 500px; margin: 0 auto 16px auto; line-height: 1.5;">
+            Your respiratory journey will appear after your first analysis. Every recorded session is analyzed for acoustic quality, energy stability, and clinical trend.
+          </p>
+          <div style="display: inline-flex; align-items: center; gap: 8px; background: rgba(0, 229, 176, 0.12); border: 1px solid rgba(0, 229, 176, 0.35); padding: 6px 16px; border-radius: 100px; color: #00e5b0; font-size: 12px; font-weight: 700;">
+            <span>🎙️</span> <span>Record a cough in Step 1 to generate your baseline</span>
+          </div>
+        </div>'''
+
+    count = len(history)
+    high_risks = sum(str(h.get("risk", "")).lower() == "high" for h in history)
+    avg_conf = sum(float(h.get("confidence", 0.8)) for h in history) / count * 100
+
+    # Build timeline items from actual records
+    timeline_rows = ""
+    for idx, item in enumerate(history[:8]):
+        pid = escape(str(item.get("patient_id", "—")))
+        dt = escape(str(item.get("date", "—")))
+        lbl = escape(str(item.get("label", "—")))
+        rsk = escape(str(item.get("risk", "—")).title())
+        conf = float(item.get("confidence", 0)) * 100
+        risk_color = "#f43f5e" if "High" in rsk else ("#f59e0b" if "Med" in rsk else "#00e5b0")
+        timeline_rows += f'''
+        <div style="background: rgba(6, 21, 33, 0.8); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 14px; padding: 12px 18px; display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px;">
+          <div>
+            <div style="font-size: 14px; font-weight: 800; color: #ffffff;">{pid} · <span style="color: #38bdf8;">{lbl}</span></div>
+            <div style="font-size: 11.5px; color: #94a3b8; margin-top: 2px;">📅 {dt}</div>
+          </div>
+          <div style="text-align: right;">
+            <span style="display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 800; text-transform: uppercase; background: rgba(255,255,255,0.06); color: {risk_color}; border: 1px solid {risk_color};">
+              {rsk} Risk
+            </span>
+            <div style="font-size: 12px; font-weight: 700; color: #00e5b0; margin-top: 4px;">{conf:.1f}% Conf</div>
+          </div>
+        </div>
+        '''
+
+    # Comparison delta if at least 2 records exist
+    comp_html = ""
+    if len(history) >= 2:
+        curr = history[0]
+        prev = history[1]
+        c_conf = float(curr.get("confidence", 0)) * 100
+        p_conf = float(prev.get("confidence", 0)) * 100
+        delta_conf = c_conf - p_conf
+        delta_sign = "+" if delta_conf >= 0 else ""
+        delta_color = "#00e5b0" if delta_conf >= 0 else "#f43f5e"
+
+        comp_html = f'''
+        <div style="background: rgba(6, 21, 33, 0.95); border: 1px solid var(--border-line); border-radius: 16px; padding: 18px; margin-top: 18px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <h4 style="font-size: 14px; font-weight: 800; color: #ffffff; margin: 0;">🔄 Delta: Latest vs Previous Session</h4>
+            <span style="font-size: 11px; color: #94a3b8;">Authentic Historical Comparison</span>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; text-align: center;">
+            <div class="metric-item" style="padding: 10px;">
+              <span class="metric-label">Latest ({escape(str(curr.get("patient_id", "—")))})</span>
+              <span style="font-size: 15px; font-weight: 800; color: #00e5b0; display: block; margin-top: 4px;">{c_conf:.1f}% Conf</span>
+            </div>
+            <div class="metric-item" style="padding: 10px;">
+              <span class="metric-label">Previous ({escape(str(prev.get("patient_id", "—")))})</span>
+              <span style="font-size: 15px; font-weight: 800; color: #38bdf8; display: block; margin-top: 4px;">{p_conf:.1f}% Conf</span>
+            </div>
+            <div class="metric-item" style="padding: 10px;">
+              <span class="metric-label">Confidence Delta</span>
+              <span style="font-size: 15px; font-weight: 800; color: {delta_color}; display: block; margin-top: 4px;">{delta_sign}{delta_conf:.1f}%</span>
+            </div>
+          </div>
+        </div>
+        '''
+
+    return f'''
+    <div style="display: grid; gap: 16px;">
+      <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; text-align: center;">
+        <div class="metric-item">
+          <span class="metric-label">Analyzed Sessions</span>
+          <span class="metric-value" style="color: #00e5b0;">{count}</span>
+          <span class="metric-trend">● Real BioAcoustics</span>
+        </div>
+        <div class="metric-item">
+          <span class="metric-label">Avg Confidence</span>
+          <span class="metric-value" style="color: #38bdf8;">{avg_conf:.1f}%</span>
+          <span class="metric-trend">Model Precision</span>
+        </div>
+        <div class="metric-item">
+          <span class="metric-label">High-Risk Events</span>
+          <span class="metric-value" style="color: {"#f43f5e" if high_risks else "#00e5b0"};">{high_risks}</span>
+          <span class="metric-trend">Clinical Flags</span>
+        </div>
+      </div>
+
+      <div style="margin-top: 6px;">
+        <div style="font-size: 12px; font-weight: 800; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px;">
+          📈 Longitudinal Respiratory Assessments ({len(history)} total):
+        </div>
+        {timeline_rows}
+      </div>
+
+      {comp_html}
+    </div>
+    '''
+
+
 def history_dashboard_html(query: str = "") -> str:
     history = load_history()
     needle = str(query or "").strip().lower()
@@ -105,6 +230,7 @@ def history_dashboard_html(query: str = "") -> str:
         <tbody>{rows}</tbody>
       </table></div>
     </div>'''
+
 
 
 def create_pdf_report(

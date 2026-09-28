@@ -1,42 +1,112 @@
 {
-  "random_forest": {
-    "path": "C:\\Users\\chinni krishna\\Downloads\\archive\\output\\random_forest.joblib",
-    "accuracy": 0.7857142857142857
-  },
   "extra_trees": {
-    "path": "C:\\Users\\chinni krishna\\Downloads\\archive\\output\\extra_trees.joblib",
-    "accuracy": 0.8571428571428571
+    "path": "output\\extra_trees.joblib",
+    "accuracy": 0.9812,
+    "test_accuracy": 0.9792,
+    "cv_accuracy": 0.9833,
+    "f1_score": 0.9787,
+    "sensitivity_recall": 0.9583,
+    "precision": 1.0,
+    "roc_auc": 1.0
+  },
+  "random_forest": {
+    "path": "output\\random_forest.joblib",
+    "accuracy": 0.9583,
+    "test_accuracy": 0.9792,
+    "cv_accuracy": 0.9375,
+    "f1_score": 0.9796,
+    "sensitivity_recall": 1.0,
+    "precision": 0.96,
+    "roc_auc": 1.0
   },
   "gradient_boosting": {
-    "path": "C:\\Users\\chinni krishna\\Downloads\\archive\\output\\gradient_boosting.joblib",
-    "accuracy": 0.8571428571428571
+    "path": "output\\gradient_boosting.joblib",
+    "accuracy": 0.9417,
+    "test_accuracy": 0.9375,
+    "cv_accuracy": 0.9458,
+    "f1_score": 0.9412,
+    "sensitivity_recall": 1.0,
+    "precision": 0.8889,
+    "roc_auc": 0.9826
   },
   "adaboost": {
-    "path": "C:\\Users\\chinni krishna\\Downloads\\archive\\output\\adaboost.joblib",
-    "accuracy": 0.8571428571428571
+    "path": "output\\adaboost.joblib",
+    "accuracy": 0.8063,
+    "test_accuracy": 0.75,
+    "cv_accuracy": 0.8625,
+    "f1_score": 0.75,
+    "sensitivity_recall": 0.75,
+    "precision": 0.75,
+    "roc_auc": 0.8924
   },
   "bagging": {
-    "path": "C:\\Users\\chinni krishna\\Downloads\\archive\\output\\bagging.joblib",
-    "accuracy": 0.8571428571428571
-  },
-  "decision_tree": {
-    "path": "C:\\Users\\chinni krishna\\Downloads\\archive\\output\\decision_tree.joblib",
-    "accuracy": 0.7857142857142857
-  },
-  "knn": {
-    "path": "C:\\Users\\chinni krishna\\Downloads\\archive\\output\\knn.joblib",
-    "accuracy": 0.8571428571428571
+    "path": "output\\bagging.joblib",
+    "accuracy": 0.9271,
+    "test_accuracy": 0.9375,
+    "cv_accuracy": 0.9167,
+    "f1_score": 0.9412,
+    "sensitivity_recall": 1.0,
+    "precision": 0.8889,
+    "roc_auc": 0.9957
   },
   "svc": {
-    "path": "C:\\Users\\chinni krishna\\Downloads\\archive\\output\\svc.joblib",
-    "accuracy": 0.8571428571428571
+    "path": "output\\svc.joblib",
+    "accuracy": 0.9854,
+    "test_accuracy": 1.0,
+    "cv_accuracy": 0.9708,
+    "f1_score": 1.0,
+    "sensitivity_recall": 1.0,
+    "precision": 1.0,
+    "roc_auc": 1.0
   },
   "logistic": {
-    "path": "C:\\Users\\chinni krishna\\Downloads\\archive\\output\\logistic.joblib",
-    "accuracy": 0.8571428571428571
+    "path": "output\\logistic.joblib",
+    "accuracy": 0.9125,
+    "test_accuracy": 0.9375,
+    "cv_accuracy": 0.8875,
+    "f1_score": 0.9388,
+    "sensitivity_recall": 0.9583,
+    "precision": 0.92,
+    "roc_auc": 0.9861
+  },
+  "knn": {
+    "path": "output\\knn.joblib",
+    "accuracy": 0.8812,
+    "test_accuracy": 0.875,
+    "cv_accuracy": 0.8875,
+    "f1_score": 0.8889,
+    "sensitivity_recall": 1.0,
+    "precision": 0.8,
+    "roc_auc": 0.974
+  },
+  "decision_tree": {
+    "path": "output\\decision_tree.joblib",
+    "accuracy": 0.875,
+    "test_accuracy": 0.9167,
+    "cv_accuracy": 0.8333,
+    "f1_score": 0.9231,
+    "sensitivity_recall": 1.0,
+    "precision": 0.8571,
+    "roc_auc": 0.9167
   },
   "sgd": {
-    "path": "C:\\Users\\chinni krishna\\Downloads\\archive\\output\\sgd.joblib",
-    "accuracy": 0.8571428571428571
+    "path": "output\\sgd.joblib",
+    "accuracy": 0.9,
+    "test_accuracy": 0.8958,
+    "cv_accuracy": 0.9042,
+    "f1_score": 0.8936,
+    "sensitivity_recall": 0.875,
+    "precision": 0.913,
+    "roc_auc": 0.9549
+  },
+  "voting_ensemble": {
+    "path": "output\\voting_ensemble.joblib",
+    "accuracy": 0.975,
+    "test_accuracy": 1.0,
+    "cv_accuracy": 0.95,
+    "f1_score": 1.0,
+    "sensitivity_recall": 1.0,
+    "precision": 1.0,
+    "roc_auc": 1.0
   }
 }
