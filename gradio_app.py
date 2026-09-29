@@ -108,31 +108,81 @@ def convert_audio_to_wav(input_path):
     )
 
 
-def read_audio_samples(audio_path, max_seconds=30):
+NON_AUDIO_EXTENSIONS = {
+    ".pdf", ".doc", ".docx", ".txt", ".json", ".zip", ".tar", ".gz",
+    ".csv", ".xlsx", ".png", ".jpg", ".jpeg", ".exe", ".bin", ".py"
+}
+
+_MODEL_CACHE = {}
+
+
+def read_audio_samples(audio_input, sr=None, max_seconds=30):
     """Return mono float audio, sample rate, and a temporary conversion path."""
+    if isinstance(audio_input, tuple) and len(audio_input) == 2:
+        if isinstance(audio_input[0], np.ndarray):
+            in_y, in_sr = audio_input
+        elif isinstance(audio_input[1], np.ndarray):
+            in_sr, in_y = audio_input
+        else:
+            in_sr, in_y = audio_input[0], audio_input[1]
+        in_y = np.asarray(in_y, dtype=np.float32)
+        if in_y.ndim > 1:
+            in_y = np.mean(in_y, axis=1)
+        if np.max(np.abs(in_y)) > 1.0:
+            in_y = in_y / 32768.0
+        return in_y, int(in_sr), None
+
+    if isinstance(audio_input, np.ndarray):
+        in_y = np.asarray(audio_input, dtype=np.float32)
+        if in_y.ndim > 1:
+            in_y = np.mean(in_y, axis=1)
+        return in_y, int(sr or 22050), None
+
     converted_path = None
-    source_path = os.fspath(audio_path)
-    if os.path.splitext(source_path)[1].lower() not in {".wav", ".flac", ".ogg"}:
+    source_path = os.fspath(audio_input)
+    ext = os.path.splitext(source_path)[1].lower()
+    if ext in NON_AUDIO_EXTENSIONS:
+        raise ValueError(
+            f"Uploaded file '{os.path.basename(source_path)}' is not an audio recording. "
+            "Please provide a valid cough audio file (.wav, .mp3, .webm, .ogg, .flac)."
+        )
+
+    if ext not in {".wav", ".flac", ".ogg"}:
         converted_path = convert_audio_to_wav(source_path)
         source_path = converted_path
     try:
         y, sr = sf.read(source_path, dtype="float32", always_2d=False)
     except Exception:
-        converted_path = convert_audio_to_wav(source_path)
-        y, sr = sf.read(converted_path, dtype="float32", always_2d=False)
+        try:
+            converted_path = convert_audio_to_wav(source_path)
+            y, sr = sf.read(converted_path, dtype="float32", always_2d=False)
+        except Exception:
+            raise ValueError(
+                "The audio file could not be decoded. Please upload a clear recording (.wav, .mp3, .webm, .ogg)."
+            )
     if y.ndim > 1:
         y = np.mean(y, axis=1)
     y = np.asarray(y, dtype=np.float32)
     if y.size == 0:
         raise ValueError("The audio recording is empty.")
     y = np.nan_to_num(y)
+
+    # Automatic gain normalization for quiet mic recordings
+    peak = float(np.max(np.abs(y)))
+    if 0.001 < peak < 0.25:
+        y = y * (0.65 / peak)
+
     if max_seconds and y.size > int(sr * max_seconds):
         y = y[: int(sr * max_seconds)]
     return y, int(sr), converted_path
 
 
-def validate_audio_quality(audio_path):
-    y, sr, converted_path = read_audio_samples(audio_path, max_seconds=30)
+def validate_audio_quality(audio_input, max_seconds=30):
+    converted_path = None
+    if isinstance(audio_input, tuple) and len(audio_input) == 2 and isinstance(audio_input[0], np.ndarray):
+        y, sr = audio_input
+    else:
+        y, sr, converted_path = read_audio_samples(audio_input, max_seconds=max_seconds)
     try:
         duration = len(y) / sr
         rms = float(np.sqrt(np.mean(y**2)))
@@ -148,16 +198,17 @@ def validate_audio_quality(audio_path):
             silence_ratio = 1.0
         issues = []
         if duration < 0.7:
-            issues.append("Recording is too short; capture at least one clear cough.")
-        if rms < 0.003:
-            issues.append("Signal is nearly silent; move closer to the microphone.")
+            issues.append("Recording is short; capture 2–6 seconds of cough.")
+        if rms < 0.002 and peak < 0.01:
+            issues.append("Signal level is quiet; auto-gain boosted for analysis.")
         if clipping_ratio > 0.02:
             issues.append("Audio is clipping; move slightly away from the microphone.")
         if silence_ratio > 0.9:
-            issues.append("Most of the recording is silence.")
+            issues.append("Noticeable silence in recording.")
         if duration > 25:
             issues.append("Only the first 30 seconds were analysed.")
-        blocking = duration < 0.35 or rms < 0.0005
+        # Only block if audio has literally zero signal (completely empty/zeroed array)
+        blocking = duration <= 0.05 or peak < 1e-6
         status = "poor" if blocking else ("review" if issues else "good")
         return {
             "status": status, "blocking": blocking, "duration": duration,
@@ -206,7 +257,12 @@ def compare_models(X, model_files):
     rows = []
     for filename in model_files:
         try:
-            model = joblib.load(os.path.join(ARTIFACT_DIR, filename))
+            if filename not in _MODEL_CACHE:
+                loaded_clf = joblib.load(os.path.join(ARTIFACT_DIR, filename))
+                if hasattr(loaded_clf, "n_jobs"):
+                    loaded_clf.n_jobs = 1
+                _MODEL_CACHE[filename] = loaded_clf
+            model = _MODEL_CACHE[filename]
             prediction, confidence, disease_probability = model_probability(model, X)
             name = filename.removesuffix(".joblib")
             rows.append({
@@ -235,18 +291,23 @@ def comparison_html(rows):
       <div class="history-table-wrap"><table class="history-table"><thead><tr><th>Model</th><th>Prediction</th><th>Confidence</th><th>Validation accuracy</th></tr></thead><tbody>{body}</tbody></table></div></div>'''
 
 
-def create_explainability_chart(audio_path, rows, selected_filename):
+def create_explainability_chart(audio_input, rows, selected_filename):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    y, sr, converted_path = read_audio_samples(audio_path, max_seconds=30)
+    converted_path = None
+    if isinstance(audio_input, tuple) and len(audio_input) == 2 and isinstance(audio_input[0], np.ndarray):
+        y, sr = audio_input
+    else:
+        y, sr, converted_path = read_audio_samples(audio_input, max_seconds=30)
     fd, chart_path = tempfile.mkstemp(prefix="aerova-explain-", suffix=".png")
     os.close(fd)
     try:
         fig, axes = plt.subplots(2, 1, figsize=(10, 6), facecolor="#071d2d")
         fig.subplots_adjust(hspace=.42, left=.09, right=.96, top=.92, bottom=.10)
-        axes[0].specgram(y, NFFT=1024, Fs=sr, noverlap=768, cmap="magma")
+        y_spec = y + 1e-6 * np.random.randn(len(y)).astype(np.float32)
+        axes[0].specgram(y_spec, NFFT=1024, Fs=sr, noverlap=512, cmap="magma")
         axes[0].set(title="Cough frequency spectrogram", xlabel="Time (seconds)", ylabel="Frequency (Hz)")
         selected = next((row for row in rows if row["filename"] == selected_filename), rows[0])
         values = [1 - selected["disease_probability"], selected["disease_probability"]]
@@ -268,11 +329,14 @@ def create_explainability_chart(audio_path, rows, selected_filename):
                 pass
 
 
-def extract_audio_features(audio_path, n_mfcc=N_MFCC):
+def extract_audio_features(audio_input, n_mfcc=N_MFCC):
     """Extract features without using librosa's slow WebM/audioread fallback."""
     converted_path = None
     try:
-        y, sr, converted_path = read_audio_samples(audio_path, max_seconds=30)
+        if isinstance(audio_input, tuple) and len(audio_input) == 2 and isinstance(audio_input[0], np.ndarray):
+            y, sr = audio_input
+        else:
+            y, sr, converted_path = read_audio_samples(audio_input, max_seconds=30)
 
         features = {}
         # NumPy STFT avoids librosa/Numba's multi-minute first-call compilation
@@ -423,6 +487,7 @@ def resolve_audio_path(audio_data, audio_file, audio_url):
 
 
 def predict(audio_data, audio_file, audio_url, manual_notes, model_filename, gender, age, cough_detected, respiratory_condition, fever_muscle_pain):
+    converted_path = None
     try:
         preprocessor = load_preprocessor()
 
@@ -430,16 +495,21 @@ def predict(audio_data, audio_file, audio_url, manual_notes, model_filename, gen
         if audio_path is None:
             return '<div class="result-card result-error"><strong>No audio yet</strong><span>Upload a recording, use your microphone, or paste an audio URL to begin.</span></div>', "", "", None, "", {}
 
-        audio_quality = validate_audio_quality(audio_path)
+        # 1. Read and decode audio once
+        y, sr, converted_path = read_audio_samples(audio_path, max_seconds=30)
+
+        # 2. Audio quality validation on decoded samples
+        audio_quality = validate_audio_quality((y, sr))
         audio_quality_html = quality_html(audio_quality)
         if audio_quality["blocking"]:
             return (
-                '<div class="result-card result-error"><strong>Recording needs attention</strong><span>The signal is too short or quiet for a reliable readout. Please record again.</span></div>',
+                '<div class="result-card result-error"><strong>Recording needs attention</strong><span>The audio signal is silent or too short for a reliable readout. Please record or upload a clear cough sound.</span></div>',
                 "", audio_quality_html, None, "", {"quality": audio_quality},
             )
 
+        # 3. Build input dataframe using decoded samples
         input_df = build_input_dataframe(
-            audio_path,
+            (y, sr),
             gender,
             age,
             cough_detected,
@@ -458,7 +528,13 @@ def predict(audio_data, audio_file, audio_url, manual_notes, model_filename, gen
         if not model_path or not os.path.exists(model_path):
             return f'<div class="result-card result-error"><strong>Model unavailable</strong><span>{escape(str(model_filename or "No compatible model found"))}</span></div>', "", audio_quality_html, None, "", {"quality": audio_quality}
 
-        model = joblib.load(model_path)
+        sel_name = os.path.basename(model_path)
+        if sel_name not in _MODEL_CACHE:
+            loaded_clf = joblib.load(model_path)
+            if hasattr(loaded_clf, "n_jobs"):
+                loaded_clf.n_jobs = 1
+            _MODEL_CACHE[sel_name] = loaded_clf
+        model = _MODEL_CACHE[sel_name]
         expected_features = len(preprocessor.get_feature_names_out())
         actual_features = getattr(model, "n_features_in_", expected_features)
         if actual_features != expected_features:
@@ -466,49 +542,74 @@ def predict(audio_data, audio_file, audio_url, manual_notes, model_filename, gen
             if not fallback:
                 raise ValueError(f"Model '{os.path.basename(model_path)}' is incompatible with the loaded preprocessor.")
             model_path = os.path.join(ARTIFACT_DIR, fallback)
-            model = joblib.load(model_path)
-        # Some saved ensemble models retain n_jobs=-1. On restricted Windows
-        # hosts that makes joblib create worker pipes and raises WinError 5.
+            sel_name = os.path.basename(model_path)
+            if sel_name not in _MODEL_CACHE:
+                loaded_clf = joblib.load(model_path)
+                if hasattr(loaded_clf, "n_jobs"):
+                    loaded_clf.n_jobs = 1
+                _MODEL_CACHE[sel_name] = loaded_clf
+            model = _MODEL_CACHE[sel_name]
+
         prediction, confidence, covid_proba = model_probability(model, X)
         healthy_proba = 1.0 - covid_proba
 
         detail_result = build_prediction_result(
             prediction=prediction,
-            probability=confidence,
+            probability=covid_proba,
             notes=str(manual_notes or ""),
             respiratory_condition=parse_bool(respiratory_condition),
             fever_muscle_pain=parse_bool(fever_muscle_pain),
+            age=float(age) if age is not None else 35.0,
         )
-        label = "Urgent review" if detail_result["status"] == "urgent" else ("Disease" if prediction == 1 else "Healthy")
+
+        # Audio-First Determination: Classification and confidence derived directly from the voice/recording model
+        if detail_result.get("status") == "urgent":
+            label = "Urgent review"
+            status_class = "status-review"
+            display_confidence = confidence
+        elif prediction == 1 or covid_proba >= 0.50:
+            label = "Disease"
+            status_class = "status-review"
+            display_confidence = covid_proba
+        else:
+            label = "Healthy"
+            status_class = "status-healthy"
+            display_confidence = healthy_proba
 
         risk = str(detail_result["risk_level"]).lower()
-        status_class = "status-healthy" if label == "Healthy" else "status-review"
         risk_class = f"risk-{risk}"
         symptoms = detail_result["symptoms_detected"] or ["No symptoms reported"]
         symptom_chips = "".join(f'<span class="symptom-chip">{escape(str(item))}</span>' for item in symptoms)
         result_html = f'''<div class="result-card {status_class}">
             <div class="result-kicker">SCREENING SIGNAL</div>
-            <div class="result-heading"><span>{escape(label)}</span><span class="confidence">{confidence * 100:.1f}% confidence</span></div>
+            <div class="result-heading"><span>{escape(label)}</span><span class="confidence">{display_confidence * 100:.1f}% confidence</span></div>
             <p class="result-summary">{escape(detail_result["final_classification"])}</p>
-            <div class="meter"><span style="width: {confidence * 100:.1f}%"></span></div>
+            <div class="meter"><span style="width: {display_confidence * 100:.1f}%"></span></div>
             <div class="result-meta"><span class="risk-pill {risk_class}">{escape(risk)} risk</span><span>Model: {escape(os.path.basename(model_path))}</span></div>
         </div>'''
         details_html = f'''<div class="details-panel">
             <div class="detail-section"><div class="section-label">What we heard</div><p>{escape(detail_result["sound_classification"])}</p></div>
             <div class="detail-section"><div class="section-label">Context signals</div><p>{escape(detail_result["symptom_classification"])}</p><div class="chips">{symptom_chips}</div></div>
             <div class="recommendation"><div class="section-label">Next best step</div><p>{escape(detail_result["recommendation"])}</p></div>
+            {detail_result.get("precautions_html", "")}
         </div>'''
         model_files = compatible_model_files(preprocessor, list_available_models())
         comparison_rows = compare_models(X, model_files)
-        chart_path = create_explainability_chart(audio_path, comparison_rows, os.path.basename(model_path))
+        chart_path = create_explainability_chart((y, sr), comparison_rows, os.path.basename(model_path))
         metadata = {
             "quality": audio_quality, "comparison": comparison_rows,
-            "confidence": confidence, "label": label, "risk": risk,
+            "confidence": display_confidence, "label": label, "risk": risk,
             "model": os.path.basename(model_path), "chart_path": chart_path,
         }
         return result_html, details_html, audio_quality_html, chart_path, comparison_html(comparison_rows), metadata
     except Exception as exc:
         return f'<div class="result-card result-error"><strong>Something went wrong</strong><span>{escape(str(exc))}</span></div>', "", "", None, "", {}
+    finally:
+        if converted_path and os.path.exists(converted_path):
+            try:
+                os.remove(converted_path)
+            except OSError:
+                pass
 
 
 def main():

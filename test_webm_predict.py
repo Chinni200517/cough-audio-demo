@@ -66,7 +66,12 @@ row = {
     'fever_muscle_pain': False,
 }
 row.update(extract_audio_features(file_path))
-df = pd.DataFrame([row])
+expected_cols = list(getattr(preprocessor, "feature_names_in_", row.keys()))
+cat_cols = set(preprocessor.transformers_[1][2]) if hasattr(preprocessor, "transformers_") else set()
+for col in expected_cols:
+    if col not in row:
+        row[col] = "unknown" if col in cat_cols else 0.0
+df = pd.DataFrame([row], columns=expected_cols)
 X = preprocessor.transform(df)
 model_files = [f for f in ARTIFACT_DIR.iterdir() if f.suffix == '.joblib' and f.name != 'preprocessor.joblib']
 if not model_files:
